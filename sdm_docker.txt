@@ -1,0 +1,10 @@
+docker run --gpus all -v /mnt/d/projects/cardiac_gan/echo_from_noise:/app -i -t megleczm/sdm-test
+
+mpiexec -n 8 python image_train.py --data_dir ./ade20k --dataset_mode ade20k --lr 1e-4 --batch_size_train 4 --attention_resolutions 32,16,8 --diffusion_steps 1000 \
+                                   --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2  \
+                                   --resblock_updown True --use_fp16 True --use_scale_shift_norm True --use_checkpoint True --num_classes 151 \
+	                           --class_cond True --no_instance True
+
+mpiexec -np 1 python3 ./semantic_diffusion_model/image_train.py --datadir ./ade20k --savedir ./output --batch_size_train 12 \
+ --is_train True --save_interval 50000 --lr_anneal_steps 50000 --random_flip True --deterministic_train False \
+ --img_size 256 --dataset_mode ade20k --random_flip False --num_classes 151
