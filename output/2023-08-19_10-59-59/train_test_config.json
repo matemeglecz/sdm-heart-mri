@@ -1,7 +1,7 @@
 {
     "DATASETS": {
         "DATADIR": "/mnt/d/projects/cardiac_gan/OneDrive_2023-03-16/SE dataset/se/2022_11_22/",
-        "SAVEDIR": "./output",
+        "SAVEDIR": "./output/2023-08-19_10-59-59",
         "DATASET_MODE": "se"
     },
     "TRAIN": {

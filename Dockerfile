@@ -21,8 +21,8 @@ RUN apt-get update && apt-get install -y python3-pip
 
 # install conda
 RUN conda install mpi4py
-COPY requirements2.txt requirements2.txt
-RUN pip install -r requirements2.txt
+COPY requirements3.txt requirements3.txt
+RUN pip install -r requirements3.txt
 WORKDIR /app
 
 RUN pip list

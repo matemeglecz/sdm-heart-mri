@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 from mpi4py import MPI
 from torch.utils.data import DataLoader, Dataset
+from .se_dataset import SeDataset
 
 
 def load_data(cfg):
@@ -23,62 +24,73 @@ def load_data(cfg):
     if not cfg.DATASETS.DATADIR:
         raise ValueError("unspecified data directory")
 
-    if cfg.DATASETS.DATASET_MODE == 'cityscapes':
-        all_files = _list_image_files_recursively(
-            os.path.join(cfg.DATASETS.DATADIR, 'leftImg8bit', 'train' if cfg.TRAIN.IS_TRAIN else 'val'))
-        labels_file = _list_image_files_recursively(
-            os.path.join(cfg.DATASETS.DATADIR, 'gtFine', 'train' if cfg.TRAIN.IS_TRAIN else 'val'))
-        classes = [x for x in labels_file if x.endswith('_labelIds.png')]
-        instances = [x for x in labels_file if x.endswith('_instanceIds.png')]
-    elif cfg.DATASETS.DATASET_MODE == 'ade20k':
-        all_files = _list_image_files_recursively(
-            os.path.join(cfg.DATASETS.DATADIR, 'images', 'training' if cfg.TRAIN.IS_TRAIN else 'validation'))
-        classes = _list_image_files_recursively(
-            os.path.join(cfg.DATASETS.DATADIR, 'annotations', 'training' if cfg.TRAIN.IS_TRAIN else 'validation'))
-        instances = None
-
-    elif cfg.DATASETS.DATASET_MODE == 'camus':
-        if cfg.TEST.INFERENCE_ON_TRAIN and not cfg.TRAIN.IS_TRAIN:  # inference on train in one go to make synthetic image generation easier
-            all_files = glob.glob(os.path.join(cfg.DATASETS.DATADIR, 'images', 'training', '*.png'))
-            all_files = all_files + glob.glob(os.path.join(cfg.DATASETS.DATADIR, 'images', 'validation', '*.png'))
-            classes = glob.glob(os.path.join(cfg.DATASETS.DATADIR, 'sector_annotations', 'training', '*.png'))
-            classes = classes + glob.glob(
-                os.path.join(cfg.DATASETS.DATADIR, 'sector_annotations', 'validation', '*.png'))
-            instances = None
-        else:
+    if cfg.DATASETS.DATASET_MODE == 'se':
+        dataset = SeDataset(cfg.DATASETS.DATADIR, 
+            cfg.TRAIN.IMG_SIZE, 
+            classes=cfg.TRAIN.NUM_CLASSES,
+            instances=None,
+            shard=MPI.COMM_WORLD.Get_rank(),
+            num_shards=MPI.COMM_WORLD.Get_size(),
+            random_crop=cfg.TRAIN.RANDOM_CROP,
+            random_flip=cfg.TRAIN.RANDOM_FLIP,
+            is_train=cfg.TRAIN.IS_TRAIN)
+    else:
+        if cfg.DATASETS.DATASET_MODE == 'cityscapes':
+            all_files = _list_image_files_recursively(
+                os.path.join(cfg.DATASETS.DATADIR, 'leftImg8bit', 'train' if cfg.TRAIN.IS_TRAIN else 'val'))
+            labels_file = _list_image_files_recursively(
+                os.path.join(cfg.DATASETS.DATADIR, 'gtFine', 'train' if cfg.TRAIN.IS_TRAIN else 'val'))
+            classes = [x for x in labels_file if x.endswith('_labelIds.png')]
+            instances = [x for x in labels_file if x.endswith('_instanceIds.png')]
+        elif cfg.DATASETS.DATASET_MODE == 'ade20k':
             all_files = _list_image_files_recursively(
                 os.path.join(cfg.DATASETS.DATADIR, 'images', 'training' if cfg.TRAIN.IS_TRAIN else 'validation'))
             classes = _list_image_files_recursively(
-                os.path.join(cfg.DATASETS.DATADIR, 'sector_annotations',
-                             'training' if cfg.TRAIN.IS_TRAIN else 'validation'))
+                os.path.join(cfg.DATASETS.DATADIR, 'annotations', 'training' if cfg.TRAIN.IS_TRAIN else 'validation'))
             instances = None
-    elif cfg.DATASETS.DATASET_MODE == 'celeba':
-        # The edge is computed by the instances.
-        # However, the edge get from the labels and the instances are the same on CelebA.
-        # You can take either as instance input
-        all_files = _list_image_files_recursively(
-            os.path.join(cfg.DATASETS.DATADIR, 'train' if cfg.TRAIN.IS_TRAIN else 'test', 'images'))
-        classes = _list_image_files_recursively(
-            os.path.join(cfg.DATASETS.DATADIR, 'train' if cfg.TRAIN.IS_TRAIN else 'test', 'labels'))
-        instances = _list_image_files_recursively(
-            os.path.join(cfg.DATASETS.DATADIR, 'train' if cfg.TRAIN.IS_TRAIN else 'test', 'labels'))
-    else:
-        raise NotImplementedError('{} not implemented'.format(cfg.DATASETS.DATASET_MODE))
 
-    print("Len of Dataset:", len(all_files))
+        elif cfg.DATASETS.DATASET_MODE == 'camus':
+            if cfg.TEST.INFERENCE_ON_TRAIN and not cfg.TRAIN.IS_TRAIN:  # inference on train in one go to make synthetic image generation easier
+                all_files = glob.glob(os.path.join(cfg.DATASETS.DATADIR, 'images', 'training', '*.png'))
+                all_files = all_files + glob.glob(os.path.join(cfg.DATASETS.DATADIR, 'images', 'validation', '*.png'))
+                classes = glob.glob(os.path.join(cfg.DATASETS.DATADIR, 'sector_annotations', 'training', '*.png'))
+                classes = classes + glob.glob(
+                    os.path.join(cfg.DATASETS.DATADIR, 'sector_annotations', 'validation', '*.png'))
+                instances = None
+            else:
+                all_files = _list_image_files_recursively(
+                    os.path.join(cfg.DATASETS.DATADIR, 'images', 'training' if cfg.TRAIN.IS_TRAIN else 'validation'))
+                classes = _list_image_files_recursively(
+                    os.path.join(cfg.DATASETS.DATADIR, 'sector_annotations',
+                                'training' if cfg.TRAIN.IS_TRAIN else 'validation'))
+                instances = None
+        elif cfg.DATASETS.DATASET_MODE == 'celeba':
+            # The edge is computed by the instances.
+            # However, the edge get from the labels and the instances are the same on CelebA.
+            # You can take either as instance input
+            all_files = _list_image_files_recursively(
+                os.path.join(cfg.DATASETS.DATADIR, 'train' if cfg.TRAIN.IS_TRAIN else 'test', 'images'))
+            classes = _list_image_files_recursively(
+                os.path.join(cfg.DATASETS.DATADIR, 'train' if cfg.TRAIN.IS_TRAIN else 'test', 'labels'))
+            instances = _list_image_files_recursively(
+                os.path.join(cfg.DATASETS.DATADIR, 'train' if cfg.TRAIN.IS_TRAIN else 'test', 'labels'))
+        else:
+            raise NotImplementedError('{} not implemented'.format(cfg.DATASETS.DATASET_MODE))
 
-    dataset = ImageDataset(
-        cfg.DATASETS.DATASET_MODE,
-        cfg.TRAIN.IMG_SIZE,
-        all_files,
-        classes=classes,
-        instances=instances,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
-        random_crop=cfg.TRAIN.RANDOM_CROP,
-        random_flip=cfg.TRAIN.RANDOM_FLIP,
-        is_train=cfg.TRAIN.IS_TRAIN
-    )
+        print("Len of Dataset:", len(all_files))
+
+        dataset = ImageDataset(
+            cfg.DATASETS.DATASET_MODE,
+            cfg.TRAIN.IMG_SIZE,
+            all_files,
+            classes=classes,
+            instances=instances,
+            shard=MPI.COMM_WORLD.Get_rank(),
+            num_shards=MPI.COMM_WORLD.Get_size(),
+            random_crop=cfg.TRAIN.RANDOM_CROP,
+            random_flip=cfg.TRAIN.RANDOM_FLIP,
+            is_train=cfg.TRAIN.IS_TRAIN
+        )
 
     if cfg.TRAIN.IS_TRAIN:
         batch_size = cfg.TRAIN.BATCH_SIZE

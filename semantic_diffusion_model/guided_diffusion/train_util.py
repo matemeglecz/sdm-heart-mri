@@ -40,6 +40,7 @@ class TrainLoop:
             schedule_sampler=None,
             weight_decay=0.0,
             lr_anneal_steps=0,
+            visualizer=None,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -174,8 +175,8 @@ class TrainLoop:
                     return
             self.step += 1
         # Save the last checkpoint if it wasn't already saved.
-        if (self.step - 1) % self.save_interval != 0:
-            self.save()
+        # if (self.step - 1) % self.save_interval != 0:
+        self.save(final=True)
 
     def run_step(self, batch, cond):
         self.forward_backward(batch, cond)
@@ -239,7 +240,7 @@ class TrainLoop:
         logger.logkv("lr", self.opt.param_groups[0]['lr'])
         logger.logkv("lr_anneal_steps", self.lr_anneal_steps)
 
-    def save(self):
+    def save(self, final=False):
         def save_checkpoint(rate, params):
             state_dict = self.mp_trainer.master_params_to_state_dict(params)
             if dist.get_rank() == 0:
@@ -248,6 +249,8 @@ class TrainLoop:
                     filename = f"model{(self.step + self.resume_step):06d}.pt"
                 else:
                     filename = f"ema_{rate}_{(self.step + self.resume_step):06d}.pt"
+                if final:
+                    filename = f"model_final.pt"
                 with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
                     th.save(state_dict, f)
 

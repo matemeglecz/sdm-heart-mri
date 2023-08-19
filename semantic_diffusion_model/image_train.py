@@ -6,7 +6,9 @@ import argparse
 import json
 import os
 from argparse import ArgumentParser
-
+import wandb
+from guided_diffusion.visualizer import Visualizer
+from datetime import datetime
 import deepspeed
 
 from config import cfg
@@ -234,6 +236,21 @@ def get_args_from_command_line():
     parser.add_argument('--results_dir',
                         default=cfg.TEST.RESULTS_DIR,
                         type=str)
+    parser.add_argument('--use_wandb', 
+                        action='store_true', 
+                        default=False)
+    parser.add_argument('--wandb_project_name',
+                        default='Heart mri semantic diffusion',
+                        type=str)
+    parser.add_argument('--wandb_entity_name',
+                        default='megleczmate',
+                        type=str)
+    parser.add_argument('--run_name',
+                        default=None,
+                        type=str)
+    parser.add_argument('--image_log_interval',
+                        default=cfg.TRAIN.LOG_INTERVAL,
+                        type=int)
 
     args = parser.parse_args()
 
@@ -243,10 +260,14 @@ def get_args_from_command_line():
 def main():
     args = get_args_from_command_line()
     
+    if args.run_name is None:
+        # get timestamp
+        args.run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") 
+
     if args.datadir is not None:
         cfg.DATASETS.DATADIR = args.datadir
     if args.savedir is not None:
-        cfg.DATASETS.SAVEDIR = args.savedir
+        cfg.DATASETS.SAVEDIR = args.savedir + '/' + args.run_name
     if args.dataset_mode is not None:
         cfg.DATASETS.DATASET_MODE = args.dataset_mode
     if args.learn_sigma is not None:
@@ -354,6 +375,10 @@ def main():
 
     deepspeed.init_distributed()
 
+    # init wandb with tensorboard
+    if args.use_wandb:
+        wandb_run = wandb.init(project=args.wandb_project_name, entity=args.wandb_entity_name ,name=args.run_name, config=args, sync_tensorboard=True) if not wandb.run else wandb.run
+        visualizer = Visualizer(wandb_run, args.image_log_interval)
     dist_util.setup_dist()
     logger.configure(save_dir=cfg.DATASETS.SAVEDIR)
 
@@ -392,8 +417,11 @@ def main():
         schedule_sampler=schedule_sampler,
         weight_decay=cfg.TRAIN.WEIGHT_DECAY,
         lr_anneal_steps=cfg.TRAIN.LR_ANNEAL_STEPS,
+        visualizer=visualizer,
     ).run_loop()
 
+    wandb_run.save(cfg.DATASETS.SAVEDIR + '/final.pt')
 
+    wandb_run.finish()
 if __name__ == "__main__":
     main()
