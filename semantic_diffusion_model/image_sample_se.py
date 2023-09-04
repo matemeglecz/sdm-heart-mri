@@ -1,24 +1,29 @@
 """
-Train a diffusion model on images.
+Generate a large batch of image samples from a model and save them as a large
+numpy array. This can be used to produce samples for FID evaluation.
 """
 
 import argparse
-import json
 import os
 from argparse import ArgumentParser
-import wandb
-from guided_diffusion.visualizer import Visualizer
-from datetime import datetime
+
 import deepspeed
+import numpy as np
+import torch as th
+import torch.distributed as dist
+import torchvision as tv
+from PIL import Image
+from skimage.color import label2rgb
+from skimage.feature import canny
 
 from config import cfg
 from guided_diffusion import dist_util, logger
 from guided_diffusion.image_datasets import load_data
-from guided_diffusion.resample import create_named_schedule_sampler
 from guided_diffusion.script_util import (
     create_model_and_diffusion,
 )
-from guided_diffusion.train_util import TrainLoop
+
+import matplotlib.pyplot as plt
 
 
 def str2bool(v):
@@ -35,11 +40,9 @@ def str2bool(v):
 def get_args_from_command_line():
     parser = ArgumentParser(description='Parser of Semantic Diffusion Model')
     parser.add_argument('--datadir',
-                        default=cfg.DATASETS.DATADIR,
-                        type=str)
+                        default=cfg.DATASETS.DATADIR)
     parser.add_argument('--savedir',
-                        default=cfg.DATASETS.SAVEDIR,
-                        type=str)
+                        default=cfg.DATASETS.SAVEDIR)
     parser.add_argument('--dataset_mode',
                         default=cfg.DATASETS.DATASET_MODE,
                         type=str)
@@ -236,21 +239,6 @@ def get_args_from_command_line():
     parser.add_argument('--results_dir',
                         default=cfg.TEST.RESULTS_DIR,
                         type=str)
-    parser.add_argument('--use_wandb', 
-                        action='store_true', 
-                        default=False)
-    parser.add_argument('--wandb_project_name',
-                        default='Heart mri semantic diffusion',
-                        type=str)
-    parser.add_argument('--wandb_entity_name',
-                        default='megleczmate',
-                        type=str)
-    parser.add_argument('--run_name',
-                        default=None,
-                        type=str)
-    parser.add_argument('--image_log_interval',
-                        default=None,
-                        type=int)
 
     args = parser.parse_args()
 
@@ -259,15 +247,11 @@ def get_args_from_command_line():
 
 def main():
     args = get_args_from_command_line()
-    
-    if args.run_name is None:
-        # get timestamp
-        args.run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") 
 
     if args.datadir is not None:
         cfg.DATASETS.DATADIR = args.datadir
     if args.savedir is not None:
-        cfg.DATASETS.SAVEDIR = args.savedir + '/' + args.run_name
+        cfg.DATASETS.SAVE_DIR = args.savedir
     if args.dataset_mode is not None:
         cfg.DATASETS.DATASET_MODE = args.dataset_mode
     if args.learn_sigma is not None:
@@ -372,59 +356,160 @@ def main():
         cfg.TEST.NUM_SAMPLES = args.num_samples
     if args.results_dir is not None:
         cfg.TEST.RESULTS_DIR = args.results_dir
-    import torch
-    torch.cuda.empty_cache()
-    deepspeed.init_distributed(distributed_port=29601)
 
-    # init wandb with tensorboard
-    if args.use_wandb:
-        #wandb.tensorboard.patch(root_logdir=cfg.DATASETS.SAVEDIR + "/tb")
-        wandb_run = wandb.init(project=args.wandb_project_name, entity=args.wandb_entity_name ,name=args.run_name, config=args, sync_tensorboard=True) if not wandb.run else wandb.run
-        visualizer = Visualizer(wandb_run, args.image_log_interval)
+    deepspeed.init_distributed()
     dist_util.setup_dist()
-    logger.configure(save_dir=cfg.DATASETS.SAVEDIR)
-
+    logger.configure()
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(cfg)
+
+    model.load_state_dict(
+        dist_util.load_state_dict(cfg.TRAIN.RESUME_CHECKPOINT)
+
+    )
     if cfg.TRAIN.DISTRIBUTED_DATA_PARALLEL:
 
         model.to(dist_util.dev())
     else:
         model.to('cuda')
 
-    schedule_sampler = create_named_schedule_sampler(cfg.TRAIN.SCHEDULE_SAMPLER, diffusion)
 
     logger.log("creating data loader...")
     data = load_data(cfg)
-    with open(os.path.join(cfg.DATASETS.SAVEDIR, 'train_test_config.json'), 'w') as fp:
-        json.dump(cfg, fp, indent=4)
-        fp.close()
 
-    logger.log("training...")
-    TrainLoop(
-        model=model,
-        diffusion=diffusion,
-        data=data,
-        num_classes=cfg.TRAIN.NUM_CLASSES,
-        batch_size=cfg.TRAIN.BATCH_SIZE,
-        microbatch=cfg.TRAIN.MICROBATCH,
-        lr=cfg.TRAIN.LR,
-        ema_rate=cfg.TRAIN.EMA_RATE,
-        drop_rate=cfg.TRAIN.DROP_RATE,
-        log_interval=cfg.TRAIN.LOG_INTERVAL,
-        save_interval=cfg.TRAIN.SAVE_INTERVAL,
-        resume_checkpoint=cfg.TRAIN.RESUME_CHECKPOINT,
-        use_fp16=cfg.TRAIN.USE_FP16,
-        fp16_scale_growth=cfg.TRAIN.FP16_SCALE_GROWTH,
-        schedule_sampler=schedule_sampler,
-        weight_decay=cfg.TRAIN.WEIGHT_DECAY,
-        lr_anneal_steps=cfg.TRAIN.LR_ANNEAL_STEPS,
-        visualizer=visualizer,
-        image_log_interval=args.image_log_interval,
-    ).run_loop()
+    if cfg.TRAIN.USE_FP16:
+        model.convert_to_fp16()
+    model.eval()
 
-    wandb_run.save(cfg.DATASETS.SAVEDIR + '/model_final.pt')
+    image_path = os.path.join(cfg.TEST.RESULTS_DIR, 'images')
+    os.makedirs(image_path, exist_ok=True)
+    label_path = os.path.join(cfg.TEST.RESULTS_DIR, 'labels')
+    os.makedirs(label_path, exist_ok=True)
+    visible_label_path = os.path.join(cfg.TEST.RESULTS_DIR, 'labels_visible')
+    os.makedirs(visible_label_path, exist_ok=True)
+    inference_path = os.path.join(cfg.TEST.RESULTS_DIR, 'samples')
+    os.makedirs(inference_path, exist_ok=True)
+    combined_path = os.path.join(cfg.TEST.RESULTS_DIR, 'combined')
+    os.makedirs(combined_path, exist_ok=True)
 
-    wandb_run.finish()
+    logger.log("sampling...")
+    all_samples = []
+    for i, (batch, cond) in enumerate(data):        
+        src_img = (batch).cuda()
+        label_img = (cond['label_ori'].float())
+        model_kwargs = preprocess_input(cond, num_classes=cfg.TRAIN.NUM_CLASSES)
+        
+        # set hyperparameter
+        model_kwargs['s'] = cfg.TEST.S
+        sample_fn = (
+            diffusion.p_sample_loop if not cfg.TEST.USE_DDIM else diffusion.ddim_sample_loop
+        )
+        inference_img = sample_fn(
+            model,
+            (cfg.TEST.BATCH_SIZE, 3, src_img.shape[2], src_img.shape[3]),
+            clip_denoised=cfg.TEST.CLIP_DENOISED,
+            model_kwargs=model_kwargs,
+            progress=False
+        )
+
+        inference_img = (inference_img + 1) / 2.0
+        
+        gathered_samples = [th.zeros_like(inference_img) for _ in range(dist.get_world_size())]
+        dist.all_gather(gathered_samples, inference_img)  # gather not supported with NCCL
+        all_samples.extend([sample.cpu().numpy() for sample in gathered_samples])
+        print(inference_img.shape)
+        for j in range(inference_img.shape[0]):
+            logger.log(j)
+            #tv.utils.save_image(src_img[j],
+            #                    os.path.join(image_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
+
+            im = src_img.cpu().float().numpy()
+            plt.imsave(os.path.join(image_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'), im[j, 0, :, :], cmap=plt.cm.bone)                    
+            #tv.utils.save_image(inference_img[j],
+            #                    os.path.join(inference_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
+            im = inference_img.cpu().float().numpy()
+            plt.imsave(os.path.join(inference_path, str(i) + str(j) + '.png'), im[j, 0, :, :], cmap=plt.cm.bone) 
+            tv.utils.save_image(label_img[j] / cfg.TRAIN.NUM_CLASSES,
+                                os.path.join(visible_label_path,
+                                             cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
+
+            label_save_img = Image.fromarray(label_img[j].cpu().detach().numpy()).convert('RGB')
+            label_save_img.save(os.path.join(label_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
+
+            src_img_np = src_img[j].permute(1, 2, 0).detach().cpu().numpy()
+            label_img_np = label_img[j].repeat(3, 1, 1).permute(1, 2, 0).detach().cpu().numpy()
+            inference_img_np = (inference_img[j].permute(1, 2, 0).detach().cpu().numpy())
+            inference_img_np = (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)
+            inference_img_np = (255 * (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)).astype(
+                int)
+
+            combined_imgs = generate_combined_imgs(src_img_np,
+                                                   label_img_np.astype(np.int_),
+                                                   inference_img_np)
+
+            im = Image.fromarray(combined_imgs)
+            im.save(os.path.join(combined_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
+
+        logger.log(f"created {len(all_samples) * cfg.TEST.BATCH_SIZE} samples")
+
+        if len(all_samples) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
+            break
+
+    dist.barrier()
+    logger.log("sampling complete")
+
+
+def generate_combined_imgs(src_in_img, label_in_img, inference_in_img):
+    overlayed_label = label2rgb(label=label_in_img[:, :, 0], image=inference_in_img,
+                                bg_label=0,
+                                channel_axis=-1,
+                                alpha=0.2, image_alpha=1)
+
+    src_out_img = (src_in_img * 255).astype('uint8')
+    overlayed_label = (overlayed_label * 255).astype('uint8')
+
+    edges = canny(label_in_img[:, :, 0] / label_in_img[:, :, 0].max())
+    edges = np.expand_dims(edges, axis=-1)
+    edges = np.concatenate((edges, edges, edges), axis=-1) * 255
+    edges[:, :, 2] = 0
+
+    overlayed_edge_label = np.copy(inference_in_img)
+    overlayed_edge_label[edges == 255] = 255
+
+    combined_imgs = np.concatenate((src_out_img, inference_in_img, overlayed_label, overlayed_edge_label),
+                                   axis=0).astype(
+        np.uint8)
+
+    return combined_imgs
+
+
+def preprocess_input(data, num_classes):
+    # move to GPU and change data types
+    data['label'] = data['label'].long()
+
+    # create one-hot label map
+    label_map = data['label']
+    bs, _, h, w = label_map.size()
+    input_label = th.FloatTensor(bs, num_classes, h, w).zero_()
+    input_semantics = input_label.scatter_(1, label_map, 1.0)
+
+    # concatenate instance map if it exists
+    if 'instance' in data:
+        inst_map = data['instance']
+        instance_edge_map = get_edges(inst_map)
+        input_semantics = th.cat((input_semantics, instance_edge_map), dim=1)
+
+    return {'y': input_semantics}
+
+
+def get_edges(t):
+    edge = th.ByteTensor(t.size()).zero_()
+    edge[:, :, :, 1:] = edge[:, :, :, 1:] | (t[:, :, :, 1:] != t[:, :, :, :-1])
+    edge[:, :, :, :-1] = edge[:, :, :, :-1] | (t[:, :, :, 1:] != t[:, :, :, :-1])
+    edge[:, :, 1:, :] = edge[:, :, 1:, :] | (t[:, :, 1:, :] != t[:, :, :-1, :])
+    edge[:, :, :-1, :] = edge[:, :, :-1, :] | (t[:, :, 1:, :] != t[:, :, :-1, :])
+    return edge.float()
+
+
 if __name__ == "__main__":
     main()

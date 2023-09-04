@@ -21,6 +21,7 @@ def load_data(cfg):
     and the values are integer tensors of class labels.
 
     """
+    
     if not cfg.DATASETS.DATADIR:
         raise ValueError("unspecified data directory")
 
@@ -33,7 +34,7 @@ def load_data(cfg):
             num_shards=MPI.COMM_WORLD.Get_size(),
             random_crop=cfg.TRAIN.RANDOM_CROP,
             random_flip=cfg.TRAIN.RANDOM_FLIP,
-            is_train=cfg.TRAIN.IS_TRAIN)
+            is_train=(cfg.TRAIN.IS_TRAIN or cfg.TEST.INFERENCE_ON_TRAIN))
     else:
         if cfg.DATASETS.DATASET_MODE == 'cityscapes':
             all_files = _list_image_files_recursively(

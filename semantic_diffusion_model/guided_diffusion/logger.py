@@ -11,6 +11,7 @@ import time
 import warnings
 from collections import defaultdict
 from contextlib import contextmanager
+import tensorflow as tf
 
 DEBUG = 10
 INFO = 20
@@ -144,7 +145,7 @@ class CSVOutputFormat(KVWriter):
         self.file.close()
 
 
-class TensorBoardOutputFormat(KVWriter):
+class TensorBoardOutputFormatOld(KVWriter):
     """
     Dumps key/value pairs into TensorBoard's numeric format.
     """
@@ -183,6 +184,30 @@ class TensorBoardOutputFormat(KVWriter):
         if self.writer:
             self.writer.Close()
             self.writer = None
+
+class TensorBoardOutputFormat(KVWriter):
+    """
+    Dumps key/value pairs into TensorBoard's numeric format.
+    """
+
+    def __init__(self, dir):        
+        os.makedirs(dir, exist_ok=True)
+        self.dir = dir
+        self.step = 1
+        prefix = "events"
+        path = osp.join(osp.abspath(dir), prefix)
+        
+        self.writer = tf.summary.create_file_writer(path)
+
+    def writekvs(self, kvs):
+        with self.writer.as_default():
+            for k, v in kvs.items():
+                tf.summary.scalar(k, v, step=self.step)
+        self.step += 1
+        print(self.step)
+
+    def close(self):
+        self.writer.close()
 
 
 def make_output_format(format, ev_dir, log_suffix=""):

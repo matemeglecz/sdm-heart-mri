@@ -1,6 +1,10 @@
 
 output/	
+OUTPUT/
+results/
 
 __pycache__/
 
 wandb/
+
+.pt

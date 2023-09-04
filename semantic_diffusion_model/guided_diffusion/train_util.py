@@ -41,6 +41,7 @@ class TrainLoop:
             weight_decay=0.0,
             lr_anneal_steps=0,
             visualizer=None,
+            image_log_interval=None,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -63,6 +64,8 @@ class TrainLoop:
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
+        self.image_log_interval = image_log_interval
+        self.visualizer = visualizer
 
         self.step = 0
         self.resume_step = 0
@@ -164,8 +167,10 @@ class TrainLoop:
                 or self.step + self.resume_step < self.lr_anneal_steps
         ):
             batch, cond = next(self.data)
+            cond_ori = cond
             cond = self.preprocess_input(cond)
             self.run_step(batch, cond)
+            
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
             if self.step % self.save_interval == 0 and self.step > 0:
@@ -173,6 +178,8 @@ class TrainLoop:
                 # Run for a finite amount of time in integration tests.
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
+            if self.step % self.image_log_interval == 0:
+                self.validate(batch, cond_ori)
             self.step += 1
         # Save the last checkpoint if it wasn't already saved.
         # if (self.step - 1) % self.save_interval != 0:
@@ -221,6 +228,21 @@ class TrainLoop:
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )
             self.mp_trainer.backward(loss)
+
+    def validate(self, batch, cond):
+        sample_fn = self.diffusion.p_sample_loop
+
+        model_kwargs = self.preprocess_input(cond)
+        cond['s'] = 1.0
+        inference_img = sample_fn(
+            self.model,
+            (self.batch_size, 3, batch.shape[2], batch.shape[3]),
+            clip_denoised=True,
+            model_kwargs=model_kwargs,
+            progress=False
+        )
+
+        self.visualizer.log_images(step=self.step, batch=batch, cond=cond, sample=inference_img)
 
     def _update_ema(self):
         for rate, params in zip(self.ema_rate, self.ema_params):
