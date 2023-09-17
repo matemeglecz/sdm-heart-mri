@@ -10,6 +10,7 @@ def create_model_and_diffusion(cfg):
         image_size=cfg.TRAIN.IMG_SIZE,
         num_classes=cfg.TRAIN.NUM_CLASSES,
         num_channels=cfg.TRAIN.NUM_CHANNELS,
+        grayscale=cfg.TRAIN.GRAYSCALE,
         num_res_blocks=cfg.TRAIN.NUM_RES_BLOCKS,
         channel_mult=cfg.TRAIN.CHANNEL_MULT,
         learn_sigma=cfg.TRAIN.DIFFUSION.LEARN_SIGMA,
@@ -44,6 +45,7 @@ def create_model(
         num_classes,
         num_channels,
         num_res_blocks,
+        grayscale=False,
         channel_mult="",
         learn_sigma=False,
         class_cond=False,
@@ -79,11 +81,16 @@ def create_model(
 
     num_classes = num_classes if no_instance else num_classes + 1
 
+    out_channels = (1 if grayscale else 3)
+
+    if learn_sigma:
+        out_channels = out_channels * 2
+
     return UNetModel(
         image_size=image_size,
-        in_channels=3,
+        in_channels=(1 if grayscale else 3),
         model_channels=num_channels,
-        out_channels=(3 if not learn_sigma else 6),
+        out_channels=out_channels,
         num_res_blocks=num_res_blocks,
         attention_resolutions=tuple(attention_ds),
         dropout=dropout,

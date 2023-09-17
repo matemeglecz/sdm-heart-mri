@@ -47,6 +47,7 @@ class SeDataset(Dataset):
         self.split = 'train' if is_train else 'test'
         self.random_crop = random_crop
         self.random_flip = random_flip
+        self.resolution = resolution
         '''
         if self.split == "interobserver" and opt.observer_id != 1:
             contours_filename = f"Contours_{opt.observer_id}.json"
@@ -93,14 +94,14 @@ class SeDataset(Dataset):
             sample, mask = transformed["image"], transformed["mask"]
         
         # Convert images to channels_first mode, from albumentations' 2d grayscale images
-        sample = resize(sample, (256, 256), anti_aliasing=True)
+        sample = resize(sample, (self.resolution, self.resolution), anti_aliasing=True)
         
-        mask = resize(mask, (256, 256), anti_aliasing=False, mode='edge', preserve_range=True, order=0)
+        mask = resize(mask, (self.resolution, self.resolution), anti_aliasing=False, mode='edge', preserve_range=True, order=0)
 
         sample = np.expand_dims(sample, 0)
 
         # repeate the first channel 3 times to make it 3 channel
-        sample = np.repeat(sample, 3, axis=0)
+        # sample = np.repeat(sample, 3, axis=0)
 
         #mask = np.expand_dims(mask, 0)
 
@@ -125,7 +126,7 @@ class SeDataset(Dataset):
         '''
 
         sample = (sample * 2) - 1
-
+        
         out_dict = {}
         out_dict['path'] = path
         out_dict['label_ori'] = mask.copy()

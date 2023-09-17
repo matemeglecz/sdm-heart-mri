@@ -251,6 +251,12 @@ def get_args_from_command_line():
     parser.add_argument('--image_log_interval',
                         default=None,
                         type=int)
+    parser.add_argument('--grayscale',
+                        type=str2bool,
+                        const=True,
+                        nargs='?',
+                        default=False
+                        )
 
     args = parser.parse_args()
 
@@ -372,6 +378,8 @@ def main():
         cfg.TEST.NUM_SAMPLES = args.num_samples
     if args.results_dir is not None:
         cfg.TEST.RESULTS_DIR = args.results_dir
+    if args.grayscale is not None:
+        cfg.TRAIN.GRAYSCALE = args.grayscale
     import torch
     torch.cuda.empty_cache()
     deepspeed.init_distributed(distributed_port=29601)
@@ -421,6 +429,7 @@ def main():
         lr_anneal_steps=cfg.TRAIN.LR_ANNEAL_STEPS,
         visualizer=visualizer,
         image_log_interval=args.image_log_interval,
+        grayscale=args.grayscale
     ).run_loop()
 
     wandb_run.save(cfg.DATASETS.SAVEDIR + '/model_final.pt')

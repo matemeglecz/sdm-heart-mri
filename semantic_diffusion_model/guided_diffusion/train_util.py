@@ -42,6 +42,7 @@ class TrainLoop:
             lr_anneal_steps=0,
             visualizer=None,
             image_log_interval=None,
+            grayscale=False
     ):
         self.model = model
         self.diffusion = diffusion
@@ -55,6 +56,7 @@ class TrainLoop:
             if isinstance(ema_rate, float)
             else [float(x) for x in ema_rate.split(",")]
         )
+        self.grayscale = grayscale
         self.drop_rate = drop_rate
         self.log_interval = log_interval
         self.save_interval = save_interval
@@ -236,7 +238,7 @@ class TrainLoop:
         cond['s'] = 1.0
         inference_img = sample_fn(
             self.model,
-            (self.batch_size, 3, batch.shape[2], batch.shape[3]),
+            (self.batch_size, (1 if self.grayscale else 3), batch.shape[2], batch.shape[3]),
             clip_denoised=True,
             model_kwargs=model_kwargs,
             progress=False
