@@ -239,6 +239,12 @@ def get_args_from_command_line():
     parser.add_argument('--results_dir',
                         default=cfg.TEST.RESULTS_DIR,
                         type=str)
+    parser.add_argument('--grayscale',
+                        type=str2bool,
+                        const=True,
+                        nargs='?',
+                        default=False
+                        )
 
     args = parser.parse_args()
 
@@ -356,7 +362,9 @@ def main():
         cfg.TEST.NUM_SAMPLES = args.num_samples
     if args.results_dir is not None:
         cfg.TEST.RESULTS_DIR = args.results_dir
-
+    if args.grayscale is not None:
+        cfg.TRAIN.GRAYSCALE = args.grayscale    
+    
     deepspeed.init_distributed()
     dist_util.setup_dist()
     logger.configure()
