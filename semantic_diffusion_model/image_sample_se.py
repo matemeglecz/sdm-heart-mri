@@ -443,13 +443,14 @@ def main():
             inference_img_np = (255 * (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)).astype(
                 int)
 
+            '''
             combined_imgs = generate_combined_imgs(src_img_np,
                                                    label_img_np.astype(np.int_),
                                                    inference_img_np)
 
             im = Image.fromarray(combined_imgs)
             im.save(os.path.join(combined_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
-
+            '''
         logger.log(f"created {len(all_samples) * cfg.TEST.BATCH_SIZE} samples")
 
         if len(all_samples) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:

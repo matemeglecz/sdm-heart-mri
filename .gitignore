@@ -3,8 +3,11 @@ output/
 OUTPUT/
 results/
 
+.pub
+Dockerfile_server
 __pycache__/
 
 wandb/
 
-.pt
+*.pt
+*.pub
