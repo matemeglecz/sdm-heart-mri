@@ -68,6 +68,7 @@ class SeDataset(Dataset):
             "interobserver": INTEROBSERVER_PATIENTS,
         }
 
+
         self.samples = mapping_utils.split_samples_list(
             self.all_samples, segmentation_partitions[self.split]
         )

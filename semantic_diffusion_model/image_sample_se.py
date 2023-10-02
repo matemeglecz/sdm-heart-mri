@@ -414,7 +414,7 @@ def main():
         )
         inference_img = sample_fn(
             model,
-            (cfg.TEST.BATCH_SIZE, 3, src_img.shape[2], src_img.shape[3]),
+            (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
             clip_denoised=cfg.TEST.CLIP_DENOISED,
             model_kwargs=model_kwargs,
             progress=False
@@ -432,17 +432,17 @@ def main():
             #                    os.path.join(image_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
 
             im = src_img.cpu().float().numpy()
-            plt.imsave(os.path.join(image_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'), im[j, 0, :, :], cmap=plt.cm.bone)                    
+            plt.imsave(os.path.join(image_path, str(i) + str(j) + '.png'), im[j, 0, :, :], cmap=plt.cm.bone)                    
             #tv.utils.save_image(inference_img[j],
             #                    os.path.join(inference_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
             im = inference_img.cpu().float().numpy()
             plt.imsave(os.path.join(inference_path, str(i) + str(j) + '.png'), im[j, 0, :, :], cmap=plt.cm.bone) 
             tv.utils.save_image(label_img[j] / cfg.TRAIN.NUM_CLASSES,
                                 os.path.join(visible_label_path,
-                                             cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
+                                             str(i) + str(j) + '.png'))
 
             label_save_img = Image.fromarray(label_img[j].cpu().detach().numpy()).convert('RGB')
-            label_save_img.save(os.path.join(label_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
+            label_save_img.save(os.path.join(label_path, str(i) + str(j) + '.png'))
 
             src_img_np = src_img[j].permute(1, 2, 0).detach().cpu().numpy()
             label_img_np = label_img[j].repeat(3, 1, 1).permute(1, 2, 0).detach().cpu().numpy()
