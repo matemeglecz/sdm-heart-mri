@@ -388,6 +388,10 @@ def main():
     if cfg.TRAIN.USE_FP16:
         model.convert_to_fp16()
     model.eval()
+    
+    folder_name = args.resume_checkpoint.split('/')[-2]
+
+    cfg.TEST.RESULTS_DIR = os.path.join(cfg.TEST.RESULTS_DIR, folder_name)
 
     image_path = os.path.join(cfg.TEST.RESULTS_DIR, 'images')
     os.makedirs(image_path, exist_ok=True)

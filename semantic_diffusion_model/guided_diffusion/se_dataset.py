@@ -5,6 +5,7 @@ import torchvision.transforms as transforms
 import random
 import torch
 from torch.utils.data import Dataset
+from collections import namedtuple
 
 TEST_PATIENTS = [7, 21, 30, 33, 34, 37, 41, 58, 86, 110, 123, 135, 145, 148, 155, 163, 164, 172, 177, 183, 190, 191, 207, 212, 220]
 VAL_PATIENTS  = []#[3, 4, 12, 14, 19, 23, 28, 35, 40, 46, 50, 55, 98, 107, 130, 137, 156, 162, 176, 182, 185, 197, 209, 213, 219]
@@ -104,27 +105,33 @@ class SeDataset(Dataset):
         # repeate the first channel 3 times to make it 3 channel
         # sample = np.repeat(sample, 3, axis=0)
 
-        #mask = np.expand_dims(mask, 0)
+        mask = np.expand_dims(mask, 0)
 
         sample = sample.astype(np.float32)
         mask = mask.astype(np.float32)
-        '''
+        
         if self.random_crop and random.random() < 0.33:
-            # apply the same transform to both A and B            
-            transform_params = get_params(self.opt, sample.shape[1:])
-            B_transform = get_transform(self.opt, transform_params, method=transforms.InterpolationMode.NEAREST, grayscale=True, convert=False)
-            A_transform = get_transform(self.opt, transform_params, grayscale=True, convert=False)
+            opt = {
+                'preprocess': 'resize_and_crop',      
+                'crop_size': int(self.resolution),
+                'load_size': self.resolution * 2,
+                'flip': self.random_flip,
+            }
+            
+            transform_params = get_params(opt, sample.shape[1:])
+            B_transform = get_transform(opt, transform_params, method=transforms.InterpolationMode.NEAREST, grayscale=True, convert=False)
+            A_transform = get_transform(opt, transform_params, grayscale=True, convert=False)
                       
             sample = torch.from_numpy(sample)
-            target = torch.from_numpy(target)
+            mask = torch.from_numpy(mask)
             
             sample = A_transform(sample)
-            target = B_transform(target)
+            mask = B_transform(mask)
 
             sample = sample.numpy()
-            target = target.numpy()
+            mask = mask.numpy()
         
-        '''
+        mask = np.squeeze(mask, axis=0)
 
         sample = (sample * 2) - 1
         
@@ -154,10 +161,63 @@ class SeDataset(Dataset):
         self.samples = [(x, t) for x, t in self.samples if "_Mapping_" in x]
 
 
-    def __crop(img, pos, size):
-        ow, oh = img.shape[1:]
-        x1, y1 = pos
-        tw = th = size
-        if (ow > tw or oh > th):
-            return img.crop((x1, y1, x1 + tw, y1 + th))
-        return img
+def get_params(opt, size):
+    w, h = size
+    new_h = h
+    new_w = w
+    if opt['preprocess'] == 'resize_and_crop':
+        new_h = new_w = opt['load_size']
+    elif opt['preprocess'] == 'scale_width_and_crop':
+        new_w = opt['load_size']
+        new_h = opt['load_size'] * h // w
+
+    x = random.randint(0, np.maximum(0, new_w - opt['crop_size']))
+    y = random.randint(0, np.maximum(0, new_h - opt['crop_size']))
+
+
+    return {'crop_pos': (x, y)}
+
+
+def get_transform(opt, params=None, grayscale=False, method=transforms.InterpolationMode.BICUBIC, convert=True):
+    transform_list = []
+    #if grayscale:
+    #    transform_list.append(transforms.Grayscale(1))
+    if 'resize' in opt['preprocess']:
+        osize = [opt['load_size'], opt['load_size']]
+        transform_list.append(transforms.Resize(osize, method))
+    elif 'scale_width' in opt['preprocess']:
+        transform_list.append(transforms.Lambda(lambda img: __scale_width(img, opt['load_size'], opt['crop_size'], method)))
+
+    if 'crop' in opt['preprocess']:
+        if params is None:
+            transform_list.append(transforms.RandomCrop(opt.crop_size))
+        else:
+            transform_list.append(transforms.Lambda(lambda img: __crop(img, params['crop_pos'], opt['crop_size'])))
+
+    if opt['preprocess'] == 'none':
+        transform_list.append(transforms.Lambda(lambda img: __make_power_2(img, base=4, method=method)))
+
+    if opt['flip']:
+        transform_list.append(transforms.RandomHorizontalFlip())
+
+    if convert:
+        #transform_list += [transforms.ToTensor()]
+        if grayscale:
+            transform_list += [transforms.Normalize((0.5,), (0.5,))]
+        else:
+            transform_list += [transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    return transforms.Compose(transform_list)
+
+def __crop(img, pos, size):
+    ow, oh = img.shape[1:]
+    x1, y1 = pos
+    tw = th = size
+    if (ow > tw or oh > th):
+        return img[:, y1:y1 + th, x1:x1 + tw]
+    return img
+
+
+def __flip(img, flip):
+    if flip:
+        return img.transpose(Image.FLIP_LEFT_RIGHT)
+    return img
