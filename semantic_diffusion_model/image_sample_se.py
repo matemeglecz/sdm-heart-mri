@@ -6,7 +6,7 @@ numpy array. This can be used to produce samples for FID evaluation.
 import argparse
 import os
 from argparse import ArgumentParser
-
+import glob
 import deepspeed
 import numpy as np
 import torch as th
@@ -403,6 +403,7 @@ def main():
     os.makedirs(inference_path, exist_ok=True)
     combined_path = os.path.join(cfg.TEST.RESULTS_DIR, 'combined')
     os.makedirs(combined_path, exist_ok=True)
+    os.makedirs('./tmp/', exist_ok=True)
 
     logger.log("sampling...")
     all_samples = []
@@ -423,6 +424,25 @@ def main():
             model_kwargs=model_kwargs,
             progress=False
         )
+        if i > 0:
+            final = None
+            pic_num = 0
+            for sample in diffusion.p_sample_loop_progressive(
+                    model,
+                    (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
+                    noise=None,
+                    clip_denoised=cfg.TEST.CLIP_DENOISED,
+                    denoised_fn=None,
+                    cond_fn=None,
+                    model_kwargs=model_kwargs,
+                    device=None,
+                    progress=False,
+            ):                
+                im = sample["sample"].cpu().float().numpy()
+                plt.imsave(os.path.join('./tmp/', str(pic_num)+'.png'), im[0, 0, :, :], cmap=plt.cm.bone)
+                pic_num = pic_num + 1
+        
+            make_gif("./tmp", cfg.TEST.RESULTS_DIR, str(i))
 
         inference_img = (inference_img + 1) / 2.0
         
@@ -470,6 +490,8 @@ def main():
 
     dist.barrier()
     logger.log("sampling complete")
+
+    
 
 
 def generate_combined_imgs(src_in_img, label_in_img, inference_in_img):
@@ -523,6 +545,11 @@ def get_edges(t):
     edge[:, :, :-1, :] = edge[:, :, :-1, :] | (t[:, :, 1:, :] != t[:, :, :-1, :])
     return edge.float()
 
+def make_gif(frame_folder, save_path, sample_num):
+    frames = [Image.open(image) for image in glob.glob(f"{frame_folder}/*.png")]
+    frame_one = frames[0]
+    frame_one.save(os.path.join(save_path, "example" + sample_num + ".gif"), format="GIF", append_images=frames,
+               save_all=True, duration=100, loop=0)
 
 if __name__ == "__main__":
     main()

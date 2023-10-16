@@ -114,7 +114,7 @@ class SeDataset(Dataset):
             opt = {
                 'preprocess': 'resize_and_crop',      
                 'crop_size': int(self.resolution),
-                'load_size': self.resolution * 2,
+                'load_size': int(self.resolution * 1.5),
                 'flip': self.random_flip,
             }
             
