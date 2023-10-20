@@ -424,7 +424,7 @@ def main():
             model_kwargs=model_kwargs,
             progress=False
         )
-        if i > 0:
+        if i < 0:
             final = None
             pic_num = 0
             for sample in diffusion.p_sample_loop_progressive(

@@ -132,7 +132,7 @@ class SeDataset(Dataset):
             mask = mask.numpy()
         
         mask = np.squeeze(mask, axis=0)
-
+        sample = (sample - np.min(sample.flatten())) / (np.max(sample.flatten()) - np.min(sample.flatten()))
         sample = (sample * 2) - 1
         
         out_dict = {}

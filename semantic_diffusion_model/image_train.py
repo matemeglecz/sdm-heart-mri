@@ -10,7 +10,7 @@ import wandb
 from guided_diffusion.visualizer import Visualizer
 from datetime import datetime
 import deepspeed
-
+import numpy as np
 from config import cfg
 from guided_diffusion import dist_util, logger
 from guided_diffusion.image_datasets import load_data
@@ -19,6 +19,7 @@ from guided_diffusion.script_util import (
     create_model_and_diffusion,
 )
 from guided_diffusion.train_util import TrainLoop
+import matplotlib.pyplot as plt
 
 
 def str2bool(v):
@@ -383,7 +384,21 @@ def main():
     import torch
     torch.cuda.empty_cache()
     deepspeed.init_distributed(distributed_port=29601)
+    '''
+    data = load_data(cfg)
 
+    batch, cond = next(data)
+    img= batch[0]
+    plt.imsave('og.png', img[0, :, :], cmap=plt.cm.bone) 
+    print(img.flatten())
+    print(np.mean((img.numpy().flatten())))
+    img = (img + 1) / 2
+    img = (img - np.min(img.numpy())) / (np.max(img.numpy()) - np.min(img.numpy()))
+    print(np.mean((img.numpy().flatten())))
+    plt.imsave('new.png', img[0, :, :], cmap=plt.cm.bone) 
+
+    return
+    '''
     # init wandb with tensorboard
     if args.use_wandb:
         #wandb.tensorboard.patch(root_logdir=cfg.DATASETS.SAVEDIR + "/tb")

@@ -23,7 +23,8 @@ def tensor2im_dicom(input_image, label, imtype=np.uint8):
         image_numpy = (image_numpy + 1) / 2
         image_numpy = np.tile(image_numpy, (1,1,1)).transpose(1,2,0) 
         #image_numpy = (image_numpy + 1) / 2 # generated image is in [-1, 1]
-        image_numpy = image_numpy / np.max(image_numpy) * 255   
+        #image_numpy = image_numpy / np.max(image_numpy) * 255
+        image_numpy = image_numpy * 255   
     elif label == 'mask':
         input_image = np.expand_dims(input_image[0, :, :], 0)
         image_numpy = np.tile(input_image, (3,1,1)).transpose(1,2,0) * 255

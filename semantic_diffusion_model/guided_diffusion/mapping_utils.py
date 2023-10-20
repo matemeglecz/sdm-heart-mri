@@ -121,18 +121,15 @@ def construct_samples_list(root, contours_filename="Contours.json"):
                     contour_paths = [expected_contours_path]*len(dcm_paths)
                     samples.extend(zip(dcm_paths, contour_paths))
             elif  "Mapping" in os.path.basename(slice_path):
-                if "T1_Mapping" in os.path.basename(slice_path):
-                    
+                if "T1_Mapping" in os.path.basename(slice_path):                    
                     contours_folders = {"Apex.dcm": "T1_map_apex", 
                                         "Base.dcm": "T1_map_base", 
                                         "Mid.dcm": "T1_map_mid_"}                    
-                elif "T2_Mapping" in os.path.basename(slice_path): 
-                    '''                   
+                elif "T2_Mapping" in os.path.basename(slice_path):                                        
                     contours_folders = {"Apex.dcm": "T2_map_apex", 
                                         "Base.dcm": "T2_map_base", 
                                         "Mid.dcm": "T2_map_mid_"} 
-                                        '''
-                    continue
+                                                            
                 for mapping_dcm_path in glob.glob(os.path.join(slice_path, '*.dcm')):
                     # Mapping dcms should be named Apex.dcm, Base.dcm, Mid.dcm, Apex_2.dcm, Base_2.dcm, Mid_2.dcm
                     # Contours for _2 files are not loaded!
