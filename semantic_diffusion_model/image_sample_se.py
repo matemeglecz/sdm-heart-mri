@@ -24,6 +24,8 @@ from guided_diffusion.script_util import (
 )
 
 import matplotlib.pyplot as plt
+from torchmetrics.image.kid import KernelInceptionDistance
+from torchmetrics.image.fid import FrechetInceptionDistance
 
 
 def str2bool(v):
@@ -365,8 +367,8 @@ def main():
     if args.grayscale is not None:
         cfg.TRAIN.GRAYSCALE = args.grayscale    
     
-    deepspeed.init_distributed()
-    dist_util.setup_dist()
+    #deepspeed.init_distributed()
+    #dist_util.setup_dist()
     logger.configure()
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(cfg)
@@ -407,6 +409,8 @@ def main():
 
     logger.log("sampling...")
     all_samples = []
+    synthesized_images = []
+    real_images = []
     for i, (batch, cond) in enumerate(data):        
         src_img = (batch).cuda()
         label_img = (cond['label_ori'].float())
@@ -417,14 +421,31 @@ def main():
         sample_fn = (
             diffusion.p_sample_loop if not cfg.TEST.USE_DDIM else diffusion.ddim_sample_loop
         )
-        inference_img = sample_fn(
-            model,
-            (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
-            clip_denoised=cfg.TEST.CLIP_DENOISED,
-            model_kwargs=model_kwargs,
-            progress=False
-        )
-        if i < 0:
+
+        import time
+        if i == 0:
+            tic = time.perf_counter()
+            
+            inference_img = sample_fn(
+                model,
+                (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
+                clip_denoised=cfg.TEST.CLIP_DENOISED,
+                model_kwargs=model_kwargs,
+                progress=False
+            )
+
+            toc = time.perf_counter()
+            print(f"Downloaded the tutorial in {toc - tic:0.4f} seconds")
+
+        else:
+            inference_img = sample_fn(
+                model,
+                (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
+                clip_denoised=cfg.TEST.CLIP_DENOISED,
+                model_kwargs=model_kwargs,
+                progress=False
+            )
+        if i == 3 or i == 5:
             final = None
             pic_num = 0
             for sample in diffusion.p_sample_loop_progressive(
@@ -439,15 +460,18 @@ def main():
                     progress=False,
             ):                
                 im = sample["sample"].cpu().float().numpy()
-                plt.imsave(os.path.join('./tmp/', str(pic_num)+'.png'), im[0, 0, :, :], cmap=plt.cm.bone)
+                plt.imsave(os.path.join('./tmp' + str(i) + '/', str(pic_num)+'.png'), im[0, 0, :, :], cmap=plt.cm.bone)
                 pic_num = pic_num + 1
         
             make_gif("./tmp", cfg.TEST.RESULTS_DIR, str(i))
 
+            if i == 5:
+                return
+
         inference_img = (inference_img + 1) / 2.0
         
-        gathered_samples = [th.zeros_like(inference_img) for _ in range(dist.get_world_size())]
-        dist.all_gather(gathered_samples, inference_img)  # gather not supported with NCCL
+        gathered_samples = [th.zeros_like(inference_img)] #for _ in range(dist.get_world_size())]
+        #dist.all_gather(gathered_samples, inference_img)  # gather not supported with NCCL
         all_samples.extend([sample.cpu().numpy() for sample in gathered_samples])
         print(inference_img.shape)
         for j in range(inference_img.shape[0]):
@@ -455,12 +479,14 @@ def main():
             #tv.utils.save_image(src_img[j],
             #                    os.path.join(image_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
 
-            im = src_img.cpu().float().numpy()
-            plt.imsave(os.path.join(image_path, str(i) + str(j) + '.png'), im[j, 0, :, :], cmap=plt.cm.bone)                    
+            src_im = src_img.cpu().float().numpy()
+            synth_im = inference_img.cpu().float().numpy()
+            '''
+            plt.imsave(os.path.join(image_path, str(i) + str(j) + '.png'), src_im[j, 0, :, :], cmap=plt.cm.bone)                    
             #tv.utils.save_image(inference_img[j],
             #                    os.path.join(inference_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
-            im = inference_img.cpu().float().numpy()
-            plt.imsave(os.path.join(inference_path, str(i) + str(j) + '.png'), im[j, 0, :, :], cmap=plt.cm.bone) 
+            
+            plt.imsave(os.path.join(inference_path, str(i) + str(j) + '.png'), synth_im[j, 0, :, :], cmap=plt.cm.bone) 
             tv.utils.save_image(label_img[j] / cfg.TRAIN.NUM_CLASSES,
                                 os.path.join(visible_label_path,
                                              str(i) + str(j) + '.png'))
@@ -474,7 +500,15 @@ def main():
             inference_img_np = (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)
             inference_img_np = (255 * (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)).astype(
                 int)
+            '''
+            print(synth_im.shape)
+            synth_im = synth_im[j]
+            src_im = src_im[j]
+            synth_im = np.expand_dims(synth_im, 0)
+            src_im = np.expand_dims(src_im, 0)
 
+            synthesized_images.append(th.from_numpy(np.tile(synth_im, (3,1,1))))
+            real_images.append(th.from_numpy(np.tile(src_im,(3,1,1))))  
             '''
             combined_imgs = generate_combined_imgs(src_img_np,
                                                    label_img_np.astype(np.int_),
@@ -488,7 +522,38 @@ def main():
         if len(all_samples) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
             break
 
-    dist.barrier()
+
+    synthesized_images = th.cat(synthesized_images, dim=0)
+    real_images = th.cat(real_images, dim=0)
+    print(synthesized_images.size())
+
+    th.save(synthesized_images, folder_name + '_syn.pt')
+    th.save(real_images, folder_name + '_real.pt')
+    # split synthesized_images into 10 subsets
+    synthesized_images = th.split(synthesized_images, 200, dim=0)
+    # split real_images into 10 subsets
+    real_images = th.split(real_images, 200, dim=0)
+
+    # calculate FID
+    fid = FrechetInceptionDistance(normalize=True, feature=768) #768
+    for i in range(len(synthesized_images)):                
+        fid.update(synthesized_images[i], real=False)
+        fid.update(real_images[i], real=True)
+
+    fid_score = fid.compute().item()
+    print('FID: ', fid_score)
+    
+
+    # calculate KID
+    kid = KernelInceptionDistance(normalize=True, subset_size=200, feature=2048, subsets=100)
+    for i in range(len(real_images)):
+        kid.update(synthesized_images[i], real=False)
+        kid.update(real_images[i], real=True)
+    
+    kid_mean, kid_std = kid.compute()
+    print('KID: ', (kid_mean, kid_std))
+
+    #dist.barrier()
     logger.log("sampling complete")
 
     
