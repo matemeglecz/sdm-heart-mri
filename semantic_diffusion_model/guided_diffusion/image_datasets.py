@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 from mpi4py import MPI
 from torch.utils.data import DataLoader, Dataset
-from .se_dataset import SeDataset
+from .se_dataset_v2 import SeDataset
 
 
 def load_data(cfg):

@@ -369,10 +369,6 @@ def main():
     
     #deepspeed.init_distributed()
     #dist_util.setup_dist()
-
-    make_gif("./tmp3", cfg.TEST.RESULTS_DIR, 'demo_gif3')
-    return
-
     logger.configure()
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(cfg)
@@ -420,12 +416,20 @@ def main():
         label_img = (cond['label_ori'].float())
         model_kwargs = preprocess_input(cond, num_classes=cfg.TRAIN.NUM_CLASSES)
         
+
+        f = open("pathes.txt", "a")
+        
+        for j in range(10):
+            f.write(f"{i}{j}. {cond['path'][j]}\n")
+        f.close()
+
+
         # set hyperparameter
         model_kwargs['s'] = cfg.TEST.S
         sample_fn = (
             diffusion.p_sample_loop if not cfg.TEST.USE_DDIM else diffusion.ddim_sample_loop
         )
-
+        '''
         import time
         if i == 0:
             tic = time.perf_counter()
@@ -449,7 +453,8 @@ def main():
                 model_kwargs=model_kwargs,
                 progress=False
             )
-        if i == 0:
+            '''
+        if i < 0:
             final = None
             pic_num = 0
             for sample in diffusion.p_sample_loop_progressive(
@@ -471,58 +476,16 @@ def main():
 
             return
 
-        inference_img = (inference_img + 1) / 2.0
+        #inference_img = (inference_img + 1) / 2.0
         
-        gathered_samples = [th.zeros_like(inference_img)] #for _ in range(dist.get_world_size())]
+        #gathered_samples = [th.zeros_like(inference_img)] #for _ in range(dist.get_world_size())]
         #dist.all_gather(gathered_samples, inference_img)  # gather not supported with NCCL
-        all_samples.extend([sample.cpu().numpy() for sample in gathered_samples])
-        print(inference_img.shape)
-        for j in range(inference_img.shape[0]):
-            logger.log(j)
-            #tv.utils.save_image(src_img[j],
-            #                    os.path.join(image_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
+        #all_samples.extend([sample.cpu().numpy() for sample in gathered_samples])
+        
+         
+        logger.log(f"created {i * cfg.TEST.BATCH_SIZE} samples")
 
-            src_im = src_img.cpu().float().numpy()
-            synth_im = inference_img.cpu().float().numpy()
-            '''
-            plt.imsave(os.path.join(image_path, str(i) + str(j) + '.png'), src_im[j, 0, :, :], cmap=plt.cm.bone)                    
-            #tv.utils.save_image(inference_img[j],
-            #                    os.path.join(inference_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
-            
-            plt.imsave(os.path.join(inference_path, str(i) + str(j) + '.png'), synth_im[j, 0, :, :], cmap=plt.cm.bone) 
-            tv.utils.save_image(label_img[j] / cfg.TRAIN.NUM_CLASSES,
-                                os.path.join(visible_label_path,
-                                             str(i) + str(j) + '.png'))
-
-            label_save_img = Image.fromarray(label_img[j].cpu().detach().numpy()).convert('RGB')
-            label_save_img.save(os.path.join(label_path, str(i) + str(j) + '.png'))
-
-            src_img_np = src_img[j].permute(1, 2, 0).detach().cpu().numpy()
-            label_img_np = label_img[j].repeat(3, 1, 1).permute(1, 2, 0).detach().cpu().numpy()
-            inference_img_np = (inference_img[j].permute(1, 2, 0).detach().cpu().numpy())
-            inference_img_np = (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)
-            inference_img_np = (255 * (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)).astype(
-                int)
-            '''
-            print(synth_im.shape)
-            synth_im = synth_im[j]
-            src_im = src_im[j]
-            synth_im = np.expand_dims(synth_im, 0)
-            src_im = np.expand_dims(src_im, 0)
-
-            synthesized_images.append(th.from_numpy(np.tile(synth_im, (3,1,1))))
-            real_images.append(th.from_numpy(np.tile(src_im,(3,1,1))))  
-            '''
-            combined_imgs = generate_combined_imgs(src_img_np,
-                                                   label_img_np.astype(np.int_),
-                                                   inference_img_np)
-
-            im = Image.fromarray(combined_imgs)
-            im.save(os.path.join(combined_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
-            '''
-        logger.log(f"created {len(all_samples) * cfg.TEST.BATCH_SIZE} samples")
-
-        if len(all_samples) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
+        if i * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
             break
 
 
@@ -617,7 +580,7 @@ def make_gif(frame_folder, save_path, sample_num):
     frames = [Image.open(image) for image in glob.glob(f"{frame_folder}/*.png")]
     frame_one = frames[0]
     frame_one.save(os.path.join(save_path, "example" + sample_num + ".gif"), format="GIF", append_images=frames,
-               save_all=True, duration=5, loop=1)
+               save_all=True, duration=100, loop=0)
 
 if __name__ == "__main__":
     main()

@@ -138,7 +138,7 @@ class SeDataset(Dataset):
         out_dict = {}
         out_dict['path'] = path
         out_dict['label_ori'] = mask.copy()
-        out_dict['label'] = mask[None,]
+        out_dict['label'] = mask#mask[None,]
 
 
         return sample, out_dict

@@ -235,7 +235,7 @@ class TrainLoop:
         sample_fn = self.diffusion.p_sample_loop
 
         model_kwargs = self.preprocess_input(cond)
-        cond['s'] = 1.0
+        model_kwargs['s'] = 1.0
         inference_img = sample_fn(
             self.model,
             (self.batch_size, (1 if self.grayscale else 3), batch.shape[2], batch.shape[3]),
@@ -265,20 +265,21 @@ class TrainLoop:
         logger.logkv("lr_anneal_steps", self.lr_anneal_steps)
 
     def save(self, final=False):
-        def save_checkpoint(rate, params):
+        def save_checkpoint(rate, params, final_save=False):
             state_dict = self.mp_trainer.master_params_to_state_dict(params)
             if dist.get_rank() == 0:
                 logger.log(f"saving model {rate}...")
                 if not rate:
                     filename = f"model{(self.step + self.resume_step):06d}.pt"
+                elif final_save:
+                    filename = f"model_final.pt"
                 else:
                     filename = f"ema_{rate}_{(self.step + self.resume_step):06d}.pt"
-                if final:
-                    filename = f"model_final.pt"
+                
                 with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
                     th.save(state_dict, f)
 
-        save_checkpoint(0, self.mp_trainer.master_params)
+        save_checkpoint(0, self.mp_trainer.master_params, final_save=final)
         for rate, params in zip(self.ema_rate, self.ema_params):
             save_checkpoint(rate, params)
 
