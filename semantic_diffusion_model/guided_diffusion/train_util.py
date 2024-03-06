@@ -1,7 +1,7 @@
 import copy
 import functools
 import os
-
+import numpy as np
 import blobfile as bf
 import torch as th
 import torch.distributed as dist
@@ -98,7 +98,7 @@ class TrainLoop:
                 for _ in range(len(self.ema_rate))
             ]
 
-        if th.cuda.is_available():
+        if th.cuda.is_available() and False: # !!!!!! EZT ÉN ÍRTAM BELE HOGY TESZTELJEK
             self.use_ddp = True
             self.ddp_model = DDP(
                 self.model,
@@ -303,6 +303,28 @@ class TrainLoop:
         input_label = th.FloatTensor(bs, nc, h, w).zero_()
         input_semantics = input_label.scatter_(1, label_map, 1.0)
 
+        '''
+        # write the unique values from the input_semantics first channel
+        # to a txt file
+        with open("unique.txt", "w") as f:
+            f.write(str(th.unique(input_semantics[:, 0, :, :])))
+            f.write(str(th.unique(input_semantics[:, 1, :, :])))
+            f.write(str(th.unique(input_semantics[:, 2, :, :])))
+            # write the shape of the input_semantics to the txt file
+            f.write(str(input_semantics.shape))
+
+            
+
+        # check if there is other than 0 in the second channel in input_semantics write result in a txt file
+        if th.max(input_semantics[:, 1, :, :]) > 0:
+            with open("check.txt", "w") as f:
+                f.write("One in the second channel of the input_semantics\n")
+
+        # same for the third channel
+        if th.max(input_semantics[:, 2, :, :]) > 0:
+            with open("check.txt", "a") as f:
+                f.write("One in the third channel of the input_semantics\n")
+        '''
         # concatenate instance map if it exists
         if 'instance' in data:
             inst_map = data['instance']

@@ -4,14 +4,21 @@ import numpy as np
 DATASET_MEAN = 239.74347588572797 / 4096
 DATASET_STD = 397.1364638124688 / 4096
 
-def tensor2im_dicom(input_image, label, imtype=np.uint8):
+DATASET_MEAN_T1_mapping = 197.62839 / 4096
+DATASET_STD_T1_mapping = 333.961248 / 4096
+
+DATASET_MEAN_T2_mapping = 396.6454446984587 / 4096
+DATASET_STD_T2_mapping = 546.4103438777042 / 4096
+
+def tensor2im_dicom(input_image, label, imtype=np.uint8, path=None):
     """"Converts a Tensor array, which is a dicom image into a numpy image array.
 
     Parameters:
         input_image (tensor) --  the input image tensor array
         imtype (type)        --  the desired type of the converted numpy array
     """
-
+    if path:
+        path = path[0]
     if label == 'real_image':
         image_numpy = input_image.data.cpu().float().numpy()[0, :, :]
         input_image = np.expand_dims(input_image[0, :, :], 0)
@@ -28,7 +35,13 @@ def tensor2im_dicom(input_image, label, imtype=np.uint8):
         # print min and max values of the image
         #print('min = %3.3f, max = %3.3f' % (np.min(image_numpy), np.max(image_numpy)))
         #image_numpy = (image_numpy + 1) / 2
-        image_numpy = image_numpy * DATASET_STD + DATASET_MEAN
+        if 'T1' in path:
+            image_numpy = image_numpy * DATASET_STD_T1_mapping + DATASET_MEAN_T1_mapping
+        elif 'T2' in path:
+            image_numpy = image_numpy * DATASET_STD_T2_mapping + DATASET_MEAN_T2_mapping
+        else:
+            image_numpy = image_numpy * DATASET_STD + DATASET_MEAN
+        
         image_numpy = np.tile(image_numpy, (1,1,1)).transpose(1,2,0) 
         #image_numpy = (image_numpy + 1) / 2 # generated image is in [-1, 1]
         #image_numpy = image_numpy / np.max(image_numpy) * 255
@@ -37,6 +50,7 @@ def tensor2im_dicom(input_image, label, imtype=np.uint8):
         
     elif label == 'mask':
         input_image = np.expand_dims(input_image[0, :, :], 0)
+        input_image = input_image / (max(input_image.flatten()) + 1)
         image_numpy = np.tile(input_image, (3,1,1)).transpose(1,2,0) * 255
 
     image_numpy = image_numpy.astype(imtype)  
@@ -62,7 +76,7 @@ class Visualizer():
             table_row = [step]
             ims_dict = {}
             
-            image_numpy = tensor2im_dicom(sample, 'sample')                
+            image_numpy = tensor2im_dicom(sample, 'sample', path=cond['path'])                
             wandb_image = wandb.Image(image_numpy)
             table_row.append(wandb_image)
             ims_dict['sample'] = wandb_image

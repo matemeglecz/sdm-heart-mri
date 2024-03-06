@@ -384,7 +384,13 @@ def contours_to_masks(contours, shape, contour_fp_precision_bits = 10):
 
     # Foreground between contours only
     # cv2.fillPoly(mask, pts=[np.concatenate(rounded_conoturs)], color=(1,1,1), shift=contour_fp_precision_bits)
-    return mask / (max(mask.flatten()) + 1)
+    
+    return mask #/ (max(mask.flatten()) + 1)
+
+def contours_to_masks_v2(contours, shape):
+
+    ret, thresh = cv2.threshold(imgray, 127, 255, 0)
+    im2, contours, hierarchy = cv2.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
 
 
 def contours_to_masks_v2(contours, shape, contour_fp_precision_bits = 8, oversampling_factor=4):
@@ -433,7 +439,38 @@ def contours_to_masks_v2(contours, shape, contour_fp_precision_bits = 8, oversam
     # Downscale to original size
     mask = cv2.resize(mask, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
 
-    return mask / (max(mask.flatten()) + 1)
+    return mask #/ (max(mask.flatten()) + 1)
+
+
+def contours_to_map(contours, shape, contour_fp_precision_bits = 8, oversampling_factor=4):
+    '''Trial, not working'''
+    upscaled_contours = [c*oversampling_factor for c in contours]
+    
+    # OpenCV's fillPoly accepts contours with fix point representation, passed as int32,
+    # whose last 'shift' bits are interpreted as fractional bits.
+    # Here we multiply by 2^contour_fp_precision_bits to achieve this representation.
+    rounded_conoturs = [np.around(contour).astype(np.int32) for contour in upscaled_contours]
+
+    # Rounded contours might have repeated points which could break filling betweeng the two contours.
+    rounded_conoturs = [unique_consecutive(contour) for contour in rounded_conoturs]
+    
+    if len(shape) == 2:
+        map = np.zeros(np.array(shape)*oversampling_factor)
+    else:
+        map = np.zeros(np.array(shape[-2:])*oversampling_factor)
+
+    print(map.shape)
+
+    cv2.drawContours(map, [rounded_conoturs[0]], -1, (1, 1, 1), thickness=8)
+
+    cv2.drawContours(map, [rounded_conoturs[1]], -1, (1, 1, 1), thickness=8)
+    
+    # print unique values
+    print(np.unique(map))
+
+    map = cv2.resize(map, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
+    print(map.shape)
+    return map
 
 
 def unique_consecutive(contour):

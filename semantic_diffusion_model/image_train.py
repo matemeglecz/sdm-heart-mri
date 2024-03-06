@@ -388,7 +388,14 @@ def main():
     data = load_data(cfg)
 
     batch, cond = next(data)
-    img= batch[0]
+    label_map = cond['label']
+    import torch as th
+    with open("unique_label_map.txt", "w") as f:
+        f.write(str(th.unique(label_map)))
+
+    return
+
+    
     plt.imsave('og.png', img[0, :, :], cmap=plt.cm.bone) 
     print(img.flatten())
     print(np.mean((img.numpy().flatten())))

@@ -370,9 +370,38 @@ def main():
     #deepspeed.init_distributed()
     #dist_util.setup_dist()
 
-    make_gif("./tmp3", cfg.TEST.RESULTS_DIR, 'demo_gif3')
-    return
+    #make_gif("./tmp3", cfg.TEST.RESULTS_DIR, 'demo_gif3')
+    #return
+    '''
+    data = load_data(cfg)
 
+    batch, cond  = next(iter(data))
+
+    
+    # save the contour images
+    for i in range(1):
+
+        src_img = batch[i]
+        # normalize
+        src_img = (src_img - th.min(src_img)) / (th.max(src_img) - th.min(src_img))
+
+        # make src image have 3 channels
+        src_img = np.tile(src_img, (3,1,1)).transpose(1,2,0)
+
+        merged = merge_contours_on_image_from_mask(src_img, cond['label_ori'][i])
+        #contour_image = np.tile(batch[i, :, :], (1,1,1)).transpose(1,2,0) * 255
+        
+        # merged to tensor
+        merged = th.from_numpy(merged).permute(2, 0, 1)
+
+        #contour_image = merge_contours_on_image(contour_image, cond[0]['contour'][i])
+        tv.utils.save_image(merged,
+                            os.path.join('/artifacts/',
+                                         str(i) + '.png'))
+
+
+    return
+    '''
     logger.configure()
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(cfg)
@@ -410,6 +439,8 @@ def main():
     combined_path = os.path.join(cfg.TEST.RESULTS_DIR, 'combined')
     os.makedirs(combined_path, exist_ok=True)
     os.makedirs('./tmp/', exist_ok=True)
+    contour_path = os.path.join(cfg.TEST.RESULTS_DIR, 'with_contour')
+    os.makedirs(contour_path, exist_ok=True)
 
     logger.log("sampling...")
     all_samples = []
@@ -425,7 +456,7 @@ def main():
         sample_fn = (
             diffusion.p_sample_loop if not cfg.TEST.USE_DDIM else diffusion.ddim_sample_loop
         )
-
+        
         import time
         if i == 0:
             tic = time.perf_counter()
@@ -449,6 +480,8 @@ def main():
                 model_kwargs=model_kwargs,
                 progress=False
             )
+
+        '''
         if i == 0:
             final = None
             pic_num = 0
@@ -464,12 +497,20 @@ def main():
                     progress=False,
             ):                
                 im = sample["sample"].cpu().float().numpy()
-                plt.imsave(os.path.join('./tmp' + '3' + '/', str(pic_num)+'.png'), im[5, 0, :, :], cmap=plt.cm.bone)
+                # put 0s before the number
+                if pic_num < 10:
+                    plt.imsave(os.path.join('./tmp/', '00' + str(pic_num)+'.png'), im[5, 0, :, :], cmap=plt.cm.bone)
+                elif pic_num < 100:
+                    plt.imsave(os.path.join('./tmp/', '0' + str(pic_num)+'.png'), im[5, 0, :, :], cmap=plt.cm.bone)
+                else:
+                    plt.imsave(os.path.join('./tmp/', str(pic_num)+'.png'), im[5, 0, :, :], cmap=plt.cm.bone)
                 pic_num = pic_num + 1
         
             make_gif("./tmp", cfg.TEST.RESULTS_DIR, str(i))
-
+            
             return
+        '''
+        
 
         inference_img = (inference_img + 1) / 2.0
         
@@ -484,7 +525,7 @@ def main():
 
             src_im = src_img.cpu().float().numpy()
             synth_im = inference_img.cpu().float().numpy()
-            '''
+            
             plt.imsave(os.path.join(image_path, str(i) + str(j) + '.png'), src_im[j, 0, :, :], cmap=plt.cm.bone)                    
             #tv.utils.save_image(inference_img[j],
             #                    os.path.join(inference_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
@@ -494,8 +535,21 @@ def main():
                                 os.path.join(visible_label_path,
                                              str(i) + str(j) + '.png'))
 
-            label_save_img = Image.fromarray(label_img[j].cpu().detach().numpy()).convert('RGB')
-            label_save_img.save(os.path.join(label_path, str(i) + str(j) + '.png'))
+            #label_save_img = Image.fromarray(label_img[j].cpu().detach().numpy()).convert('RGB')
+            #label_save_img.save(os.path.join(label_path, str(i) + str(j) + '.png'))
+            
+            contour_base = (synth_im[j, 0, :, :] - np.min(synth_im[j, 0, :, :] )) / (np.max(synth_im[j, 0, :, :]) - np.min(synth_im[j, 0, :, :]))
+
+            contour_base = np.tile(contour_base, (3,1,1)).transpose(1,2,0)
+           
+            merged = merge_contours_on_image_from_mask(contour_base, label_img[j])
+
+            merged = th.from_numpy(merged).permute(2, 0, 1)
+
+            tv.utils.save_image(merged,
+                                os.path.join(contour_path,
+                                             str(i) + str(j) + '.png'))
+            
 
             src_img_np = src_img[j].permute(1, 2, 0).detach().cpu().numpy()
             label_img_np = label_img[j].repeat(3, 1, 1).permute(1, 2, 0).detach().cpu().numpy()
@@ -503,7 +557,7 @@ def main():
             inference_img_np = (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)
             inference_img_np = (255 * (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)).astype(
                 int)
-            '''
+            
             print(synth_im.shape)
             synth_im = synth_im[j]
             src_im = src_im[j]
@@ -605,6 +659,65 @@ def preprocess_input(data, num_classes):
     return {'y': input_semantics}
 
 
+def find_last_in_row(row, value):
+    for i in range(len(row)-1, -1, -1):
+        if row[i] == value:
+            return i
+    return -1
+
+def merge_contours_on_image_from_mask(image, mask):
+    # check if the last dimension is 3
+    if image.shape[2] != 3:
+        raise ValueError("The image should have 3 channels")
+    
+    shape = image.shape
+
+    first_contour_found_outer = False
+    last_contour_found_outer = False
+    first_contour_found_inner = False
+    last_contour_found_inner = False
+    for i in range(shape[0]):
+        # find first and last occurence of 1 in the mask
+        if not last_contour_found_outer:
+            first = np.argmax(mask[i, :] == 1)
+            print(first)
+            if first > 0:
+                if not first_contour_found_outer:
+                    first_contour_found_outer = True
+                    # set image pixel value to green where the mask is 1 in that line
+                    last = find_last_in_row(mask[i, :], 1)
+                    image[i, first:last+1] = [0, 150, 0]
+                else:
+                    last = find_last_in_row(mask[i, :], 1)
+                    image[i, first] = [0, 150, 0]
+                    image[i, last] = [0, 150, 0]
+            elif first_contour_found_outer:
+                last_contour_found_outer = True
+                first = np.argmax(mask[i-1, :] == 1)
+                last = find_last_in_row(mask[i-1, :], 1)
+                image[i-1, first:last+1] = [0, 150, 0]
+
+        # same for inner with 2 pixel value
+        if not last_contour_found_inner:
+            first = np.argmax(mask[i, :] == 2)
+            if first > 0:
+                if not first_contour_found_inner:
+                    first_contour_found_inner = True
+                    last = find_last_in_row(mask[i, :], 2)
+                    image[i, first:last+1] = [150, 0, 0]
+                else:
+                    last = find_last_in_row(mask[i, :], 2)
+                    image[i, first] = [150, 0, 0]
+                    image[i, last] = [150, 0, 0]
+            elif first_contour_found_inner:
+                last_contour_found_inner = True
+                first = np.argmax(mask[i-1, :] == 2)
+                last = find_last_in_row(mask[i-1, :], 2)
+                image[i-1, first:last+1] = [150, 0, 0]
+        
+
+    return image
+
 def get_edges(t):
     edge = th.ByteTensor(t.size()).zero_()
     edge[:, :, :, 1:] = edge[:, :, :, 1:] | (t[:, :, :, 1:] != t[:, :, :, :-1])
@@ -614,10 +727,10 @@ def get_edges(t):
     return edge.float()
 
 def make_gif(frame_folder, save_path, sample_num):
-    frames = [Image.open(image) for image in glob.glob(f"{frame_folder}/*.png")]
+    frames = [Image.open(image) for image in sorted(glob.glob(f"{frame_folder}/*.png"))]
     frame_one = frames[0]
     frame_one.save(os.path.join(save_path, "example" + sample_num + ".gif"), format="GIF", append_images=frames,
-               save_all=True, duration=5, loop=1)
+               save_all=True, duration=10, loop=0)
 
 if __name__ == "__main__":
     main()

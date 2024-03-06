@@ -11,6 +11,12 @@ import os
 DATASET_MEAN = 239.74347588572797 / 4096
 DATASET_STD = 397.1364638124688 / 4096
 
+DATASET_MEAN_T1_mapping = 197.62839 / 4096
+DATASET_STD_T1_mapping = 333.961248 / 4096
+
+DATASET_MEAN_T2_mapping = 396.6454446984587 / 4096
+DATASET_STD_T2_mapping = 546.4103438777042 / 4096
+
 TEST_PATIENTS = [7, 21, 30, 33, 34, 37, 41, 58, 86, 110, 123, 135, 145, 148, 155, 163, 164, 172, 177, 183, 190, 191, 207, 212, 220]
 VAL_PATIENTS  = [3, 4, 12, 14, 19, 23, 28, 35, 40, 46, 50, 55, 98, 107, 130, 137, 156, 162, 176, 182, 185, 197, 209, 213, 219]
 TRAIN_PATIENTS = [id for id in range(1, 222+1) if id not in TEST_PATIENTS and id not in VAL_PATIENTS]
@@ -254,8 +260,11 @@ class SeDataset(Dataset):
         self.samples = mapping_utils.split_samples_list(
             self.all_samples, segmentation_partitions[self.split]
         )
-        #if opt.mapping_only:
-            #self.to_mapping_only()
+        
+        self.to_mapping_only()
+
+    def to_mapping_only(self):
+        self.samples = [(x, t) for x, t in self.samples if "_Mapping_" in x]
 
     def __getitem__(self, index: int) -> dict:
         """
@@ -268,6 +277,9 @@ class SeDataset(Dataset):
         sample = mapping_utils.load_dicom(path, mode=None, use_modality_lut=False)
         mask_contours = mapping_utils.load_contours(mask_path)
         mask = mapping_utils.contours_to_masks_v2(mask_contours, sample.shape)
+
+        #contour_map = mapping_utils.contours_to_map(mask_contours, sample.shape)
+
         if self.transforms is not None:
             if "bboxes" in self.transforms.processors.keys():
                 bbox = self.compute_bbox(mask)
@@ -280,6 +292,9 @@ class SeDataset(Dataset):
         sample = resize(sample, (self.resolution, self.resolution), anti_aliasing=True)
         
         mask = resize(mask, (self.resolution, self.resolution), anti_aliasing=False, mode='edge', preserve_range=True, order=0)
+
+        #contour_map = resize(contour_map, (self.resolution, self.resolution), anti_aliasing=False, mode='edge', preserve_range=True, order=0)
+        
 
         sample = np.expand_dims(sample, 0)
 
@@ -316,12 +331,16 @@ class SeDataset(Dataset):
         #sample = (sample - np.min(sample.flatten())) / (np.max(sample.flatten()) - np.min(sample.flatten()))
         #sample = (sample * 2) - 1
         
-        sample = (sample - DATASET_MEAN) / (DATASET_STD)
+        if 'T1' in path:
+            sample = (sample - DATASET_MEAN_T1_mapping) / (DATASET_STD_T1_mapping)
+        elif 'T2' in path:
+            sample = (sample - DATASET_MEAN_T2_mapping) / (DATASET_STD_T2_mapping)
 
         out_dict = {}
         out_dict['path'] = path
         out_dict['label_ori'] = mask.copy()
         out_dict['label'] = mask[None,]
+        #out_dict['contours'] = contour_map
 
 
         return sample, out_dict
@@ -364,6 +383,8 @@ class SeDataset(Dataset):
                     remove_count += np.sum(samples_to_drop)
         print(f"Removed {remove_count} samples from the dataset based on the IGNORED_SAMPLES list")
         return samples_numpy.tolist()
+
+
 
 
 def get_params(opt, size):
