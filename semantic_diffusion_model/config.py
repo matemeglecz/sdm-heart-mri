@@ -58,6 +58,7 @@ __C.TRAIN.NO_INSTANCE = True
 __C.TRAIN.RANDOM_CROP = False
 __C.TRAIN.RANDOM_FLIP = False
 __C.TRAIN.IS_TRAIN = False
+__C.TRAIN.TYPE_LABELING = False
 
 __C.TEST = edict()
 __C.TEST.S = 1.0

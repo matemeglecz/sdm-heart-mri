@@ -258,6 +258,11 @@ def get_args_from_command_line():
                         nargs='?',
                         default=False
                         )
+    parser.add_argument('--type_labeling',
+                        type=str2bool,
+                        nargs='?',
+                        const=False,
+                        default=cfg.TRAIN.TYPE_LABELING)
 
     args = parser.parse_args()
 
@@ -381,6 +386,8 @@ def main():
         cfg.TEST.RESULTS_DIR = args.results_dir
     if args.grayscale is not None:
         cfg.TRAIN.GRAYSCALE = args.grayscale
+    if args.type_labeling is not None:
+        cfg.TRAIN.TYPE_LABELING = args.type_labeling
     import torch
     torch.cuda.empty_cache()
     deepspeed.init_distributed(distributed_port=29601)
@@ -406,6 +413,7 @@ def main():
 
     return
     '''
+    
     # init wandb with tensorboard
     if args.use_wandb:
         #wandb.tensorboard.patch(root_logdir=cfg.DATASETS.SAVEDIR + "/tb")
@@ -435,7 +443,7 @@ def main():
         model=model,
         diffusion=diffusion,
         data=data,
-        num_classes=cfg.TRAIN.NUM_CLASSES,
+        num_classes=cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES*2,
         batch_size=cfg.TRAIN.BATCH_SIZE,
         microbatch=cfg.TRAIN.MICROBATCH,
         lr=cfg.TRAIN.LR,
@@ -451,7 +459,7 @@ def main():
         lr_anneal_steps=cfg.TRAIN.LR_ANNEAL_STEPS,
         visualizer=visualizer,
         image_log_interval=args.image_log_interval,
-        grayscale=args.grayscale
+        grayscale=args.grayscale,
     ).run_loop()
 
     wandb_run.save(cfg.DATASETS.SAVEDIR + '/model_final.pt')

@@ -42,12 +42,12 @@ class TrainLoop:
             lr_anneal_steps=0,
             visualizer=None,
             image_log_interval=None,
-            grayscale=False
+            grayscale=False,
     ):
         self.model = model
         self.diffusion = diffusion
         self.data = data
-        self.num_classes = num_classes
+        self.num_classes = num_classes 
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
@@ -55,7 +55,7 @@ class TrainLoop:
             [ema_rate]
             if isinstance(ema_rate, float)
             else [float(x) for x in ema_rate.split(",")]
-        )
+        )        
         self.grayscale = grayscale
         self.drop_rate = drop_rate
         self.log_interval = log_interval
@@ -98,7 +98,7 @@ class TrainLoop:
                 for _ in range(len(self.ema_rate))
             ]
 
-        if th.cuda.is_available() and False: # !!!!!! EZT ÉN ÍRTAM BELE HOGY TESZTELJEK
+        if th.cuda.is_available():
             self.use_ddp = True
             self.ddp_model = DDP(
                 self.model,

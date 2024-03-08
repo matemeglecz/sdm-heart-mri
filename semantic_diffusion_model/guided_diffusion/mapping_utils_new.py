@@ -472,6 +472,65 @@ def contours_to_map(contours, shape, contour_fp_precision_bits = 8, oversampling
     print(map.shape)
     return map
 
+def find_last_in_row(row, value):
+    for i in range(len(row)-1, -1, -1):
+        if row[i] == value:
+            return i
+    return -1
+
+def merge_contours_on_image_from_mask(image, mask):
+    # check if the last dimension is 3
+    if image.shape[2] != 3:
+        raise ValueError("The image should have 3 channels")
+    
+    shape = image.shape
+
+    first_contour_found_outer = False
+    last_contour_found_outer = False
+    first_contour_found_inner = False
+    last_contour_found_inner = False
+    for i in range(shape[0]):
+        # find first and last occurence of 1 in the mask
+        if not last_contour_found_outer:
+            first = np.argmax(mask[i, :] == 1)
+            print(first)
+            if first > 0:
+                if not first_contour_found_outer:
+                    first_contour_found_outer = True
+                    # set image pixel value to green where the mask is 1 in that line
+                    last = find_last_in_row(mask[i, :], 1)
+                    image[i, first:last+1] = [0, 150, 0]
+                else:
+                    last = find_last_in_row(mask[i, :], 1)
+                    image[i, first] = [0, 150, 0]
+                    image[i, last] = [0, 150, 0]
+            elif first_contour_found_outer:
+                last_contour_found_outer = True
+                first = np.argmax(mask[i-1, :] == 1)
+                last = find_last_in_row(mask[i-1, :], 1)
+                image[i-1, first:last+1] = [0, 150, 0]
+
+        # same for inner with 2 pixel value
+        if not last_contour_found_inner:
+            first = np.argmax(mask[i, :] == 2)
+            if first > 0:
+                if not first_contour_found_inner:
+                    first_contour_found_inner = True
+                    last = find_last_in_row(mask[i, :], 2)
+                    image[i, first:last+1] = [150, 0, 0]
+                else:
+                    last = find_last_in_row(mask[i, :], 2)
+                    image[i, first] = [150, 0, 0]
+                    image[i, last] = [150, 0, 0]
+            elif first_contour_found_inner:
+                last_contour_found_inner = True
+                first = np.argmax(mask[i-1, :] == 2)
+                last = find_last_in_row(mask[i-1, :], 2)
+                image[i-1, first:last+1] = [150, 0, 0]
+        
+
+    return image
+
 
 def unique_consecutive(contour):
     """Removes repeated consecutive poitns from a contour array, leaving only one occurance of each point."""

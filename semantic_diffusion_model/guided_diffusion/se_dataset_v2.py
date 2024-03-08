@@ -226,7 +226,8 @@ class SeDataset(Dataset):
             num_shards=1,
             random_crop=False,
             random_flip=False,
-            is_train=True):
+            is_train=True,
+            type_labeling=False):
         super().__init__()
 
 
@@ -235,6 +236,8 @@ class SeDataset(Dataset):
         self.random_crop = random_crop
         self.random_flip = random_flip
         self.resolution = resolution
+        self.type_labeling = type_labeling
+        self.num_classes = classes
         '''
         if self.split == "interobserver" and opt.observer_id != 1:
             contours_filename = f"Contours_{opt.observer_id}.json"
@@ -335,6 +338,10 @@ class SeDataset(Dataset):
             sample = (sample - DATASET_MEAN_T1_mapping) / (DATASET_STD_T1_mapping)
         elif 'T2' in path:
             sample = (sample - DATASET_MEAN_T2_mapping) / (DATASET_STD_T2_mapping)
+            # shift the mask values by the number of classes
+            if self.type_labeling:
+                mask = mask + self.num_classes
+            
 
         out_dict = {}
         out_dict['path'] = path

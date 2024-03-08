@@ -1,5 +1,6 @@
 import wandb
 import numpy as np
+from guided_diffusion.mapping_utils_new import merge_contours_on_image_from_mask
 
 DATASET_MEAN = 239.74347588572797 / 4096
 DATASET_STD = 397.1364638124688 / 4096
@@ -42,7 +43,7 @@ def tensor2im_dicom(input_image, label, imtype=np.uint8, path=None):
         else:
             image_numpy = image_numpy * DATASET_STD + DATASET_MEAN
         
-        image_numpy = np.tile(image_numpy, (1,1,1)).transpose(1,2,0) 
+        image_numpy = np.tile(image_numpy, (3,1,1)).transpose(1,2,0) 
         #image_numpy = (image_numpy + 1) / 2 # generated image is in [-1, 1]
         #image_numpy = image_numpy / np.max(image_numpy) * 255
         image_numpy = (image_numpy - np.min(image_numpy.flatten())) / (np.max(image_numpy.flatten()) - np.min(image_numpy.flatten()))
@@ -52,10 +53,19 @@ def tensor2im_dicom(input_image, label, imtype=np.uint8, path=None):
         input_image = np.expand_dims(input_image[0, :, :], 0)
         input_image = input_image / (max(input_image.flatten()) + 1)
         image_numpy = np.tile(input_image, (3,1,1)).transpose(1,2,0) * 255
+    
 
     image_numpy = image_numpy.astype(imtype)  
 
     return image_numpy
+
+def make_contoured_image(image, mask):
+    #image = image[0, :, :] 
+    #image = np.tile(image, (3,1,1)).transpose(1,2,0)
+    
+    merged = merge_contours_on_image_from_mask(image, mask)
+    return merged
+
 
 class Visualizer():
 
@@ -76,8 +86,8 @@ class Visualizer():
             table_row = [step]
             ims_dict = {}
             
-            image_numpy = tensor2im_dicom(sample, 'sample', path=cond['path'])                
-            wandb_image = wandb.Image(image_numpy)
+            sample_image_numpy = tensor2im_dicom(sample, 'sample', path=cond['path'])                
+            wandb_image = wandb.Image(sample_image_numpy)
             table_row.append(wandb_image)
             ims_dict['sample'] = wandb_image
 
@@ -88,8 +98,13 @@ class Visualizer():
 
             image_numpy = tensor2im_dicom(batch, 'real_image')                
             wandb_image = wandb.Image(image_numpy)
+            #table_row.append(wandb_image)
+            #ims_dict['real_image'] = wandb_image
+
+            contoured = make_contoured_image(sample_image_numpy, cond['label_ori'][0].float())
+            wandb_image = wandb.Image(contoured)
             table_row.append(wandb_image)
-            ims_dict['real_image'] = wandb_image
+            ims_dict['contoured'] = wandb_image
 
 
             self.wandb_run.log(ims_dict)

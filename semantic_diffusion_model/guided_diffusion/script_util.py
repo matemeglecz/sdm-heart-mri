@@ -8,7 +8,7 @@ from .unet import UNetModel
 def create_model_and_diffusion(cfg):
     model = create_model(
         image_size=cfg.TRAIN.IMG_SIZE,
-        num_classes=cfg.TRAIN.NUM_CLASSES,
+        num_classes=cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES*2,
         num_channels=cfg.TRAIN.NUM_CHANNELS,
         grayscale=cfg.TRAIN.GRAYSCALE,
         num_res_blocks=cfg.TRAIN.NUM_RES_BLOCKS,
