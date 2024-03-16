@@ -429,6 +429,8 @@ def main():
 
     logger.log("creating data loader...")
     data = load_data(cfg)
+    # log the number of samples
+    logger.log(f"number of samples: {len(data)}")
 
     if cfg.TRAIN.USE_FP16:
         model.convert_to_fp16()
@@ -459,7 +461,7 @@ def main():
     for i, (batch, cond) in enumerate(data):        
         src_img = (batch).cuda()
         label_img = (cond['label_ori'].float())
-        model_kwargs = preprocess_input(cond, num_classes=cfg.TRAIN.NUM_CLASSES)
+        model_kwargs = preprocess_input(cond, num_classes= (cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES * 2))
         
         # set hyperparameter
         model_kwargs['s'] = cfg.TEST.S
@@ -541,7 +543,7 @@ def main():
             #                    os.path.join(inference_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
             
             plt.imsave(os.path.join(inference_path, str(i) + str(j) + '.png'), synth_im[j, 0, :, :], cmap=plt.cm.bone) 
-            tv.utils.save_image(label_img[j] / cfg.TRAIN.NUM_CLASSES,
+            tv.utils.save_image(label_img[j] / (cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES * 2),
                                 os.path.join(visible_label_path,
                                              str(i) + str(j) + '.png'))
 
@@ -575,7 +577,7 @@ def main():
             src_im = np.expand_dims(src_im, 0)
 
             synthesized_images.append(th.from_numpy(np.tile(synth_im, (3,1,1))))
-            real_images.append(th.from_numpy(np.tile(src_im,(3,1,1))))  
+            real_images.append(th.from_numpy(np.tile(src_im,(3,1,1))))              
             '''
             combined_imgs = generate_combined_imgs(src_img_np,
                                                    label_img_np.astype(np.int_),
@@ -586,7 +588,8 @@ def main():
             '''
         logger.log(f"created {len(all_samples) * cfg.TEST.BATCH_SIZE} samples")
 
-        if len(all_samples) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
+        #if len(all_samples) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
+        if (i+1) * cfg.TEST.BATCH_SIZE > len(data):
             break
 
 

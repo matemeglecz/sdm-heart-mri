@@ -482,6 +482,10 @@ def merge_contours_on_image_from_mask(image, mask):
     # check if the last dimension is 3
     if image.shape[2] != 3:
         raise ValueError("The image should have 3 channels")
+
+    # if the smallest value in the mask is 3, then we substract 3 form the values
+    if mask.min() == 3:
+        mask -= 3
     
     shape = image.shape
 

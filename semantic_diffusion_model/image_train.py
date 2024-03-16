@@ -425,7 +425,7 @@ def main():
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(cfg)
     if cfg.TRAIN.DISTRIBUTED_DATA_PARALLEL:
-
+        
         model.to(dist_util.dev())
     else:
         model.to('cuda')
