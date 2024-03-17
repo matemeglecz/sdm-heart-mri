@@ -429,9 +429,7 @@ def main():
 
     logger.log("creating data loader...")
     data = load_data(cfg)
-    # log the number of samples
-    logger.log(f"number of samples: {len(data)}")
-
+    
     if cfg.TRAIN.USE_FP16:
         model.convert_to_fp16()
     model.eval()
@@ -589,7 +587,7 @@ def main():
         logger.log(f"created {len(all_samples) * cfg.TEST.BATCH_SIZE} samples")
 
         #if len(all_samples) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
-        if (i+1) * cfg.TEST.BATCH_SIZE > len(data):
+        if (i+1) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
             break
 
 

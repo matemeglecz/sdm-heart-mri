@@ -36,6 +36,10 @@ def load_data(cfg):
             random_flip=cfg.TRAIN.RANDOM_FLIP,
             is_train=(cfg.TRAIN.IS_TRAIN or cfg.TEST.INFERENCE_ON_TRAIN),
             type_labeling=cfg.TRAIN.TYPE_LABELING,)
+            # save len of dataset to a file
+            #with open('/artifacts/len_dataset.txt', 'w') as f:
+            #    f.write(str(len(dataset)))
+
     else:
         if cfg.DATASETS.DATASET_MODE == 'cityscapes':
             all_files = _list_image_files_recursively(
