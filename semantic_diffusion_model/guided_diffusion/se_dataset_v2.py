@@ -227,7 +227,8 @@ class SeDataset(Dataset):
             random_crop=False,
             random_flip=False,
             is_train=True,
-            type_labeling=False):
+            type_labeling=False,
+            resize=True):
         super().__init__()
 
 
@@ -238,6 +239,7 @@ class SeDataset(Dataset):
         self.resolution = resolution
         self.type_labeling = type_labeling
         self.num_classes = classes
+        self.resize = resize
         '''
         if self.split == "interobserver" and opt.observer_id != 1:
             contours_filename = f"Contours_{opt.observer_id}.json"
@@ -281,6 +283,7 @@ class SeDataset(Dataset):
         mask_contours = mapping_utils.load_contours(mask_path)
         mask = mapping_utils.contours_to_masks_v2(mask_contours, sample.shape)
 
+        size_ori = sample.shape
         #contour_map = mapping_utils.contours_to_map(mask_contours, sample.shape)
 
         if self.transforms is not None:
@@ -290,11 +293,29 @@ class SeDataset(Dataset):
             else:
                 transformed = self.transforms(image=sample, mask=mask)
             sample, mask = transformed["image"], transformed["mask"]
+
+        if 'T1' in path:
+            sample = (sample - DATASET_MEAN_T1_mapping) / (DATASET_STD_T1_mapping)
+        elif 'T2' in path:
+            sample = (sample - DATASET_MEAN_T2_mapping) / (DATASET_STD_T2_mapping)
+            # shift the mask values by the number of classes
+            if self.type_labeling:
+                mask = mask + self.num_classes
+
         
-        # Convert images to channels_first mode, from albumentations' 2d grayscale images
-        sample = resize(sample, (self.resolution, self.resolution), anti_aliasing=True)
-        
-        mask = resize(mask, (self.resolution, self.resolution), anti_aliasing=False, mode='edge', preserve_range=True, order=0)
+        if self.resize:
+            # Convert images to channels_first mode, from albumentations' 2d grayscale images
+            sample = resize(sample, (self.resolution, self.resolution), anti_aliasing=True)
+            
+            mask = resize(mask, (self.resolution, self.resolution), anti_aliasing=False, mode='edge', preserve_range=True, order=0)
+        else:
+            # fill the image with zeros to make it resolution x resolution
+            sample = np.pad(sample, ((0, self.resolution - sample.shape[0]), (0, self.resolution - sample.shape[1])), mode='constant', constant_values=0)
+            mask += 1
+            mask = np.pad(mask, ((0, self.resolution - mask.shape[0]), (0, self.resolution - mask.shape[1])), mode='constant', constant_values=0)
+
+
+
 
         #contour_map = resize(contour_map, (self.resolution, self.resolution), anti_aliasing=False, mode='edge', preserve_range=True, order=0)
         
@@ -334,19 +355,12 @@ class SeDataset(Dataset):
         #sample = (sample - np.min(sample.flatten())) / (np.max(sample.flatten()) - np.min(sample.flatten()))
         #sample = (sample * 2) - 1
         
-        if 'T1' in path:
-            sample = (sample - DATASET_MEAN_T1_mapping) / (DATASET_STD_T1_mapping)
-        elif 'T2' in path:
-            sample = (sample - DATASET_MEAN_T2_mapping) / (DATASET_STD_T2_mapping)
-            # shift the mask values by the number of classes
-            if self.type_labeling:
-                mask = mask + self.num_classes
-            
 
         out_dict = {}
         out_dict['path'] = path
         out_dict['label_ori'] = mask.copy()
         out_dict['label'] = mask[None,]
+        out_dict['size_ori'] = size_ori
         #out_dict['contours'] = contour_map
 
 

@@ -43,6 +43,7 @@ class TrainLoop:
             visualizer=None,
             image_log_interval=None,
             grayscale=False,
+            ignore_class = False
     ):
         self.model = model
         self.diffusion = diffusion
@@ -68,6 +69,7 @@ class TrainLoop:
         self.lr_anneal_steps = lr_anneal_steps
         self.image_log_interval = image_log_interval
         self.visualizer = visualizer
+        self.ignore_class = ignore_class
 
         self.step = 0
         self.resume_step = 0
@@ -300,9 +302,12 @@ class TrainLoop:
         label_map = data['label']
         bs, _, h, w = label_map.size()
         nc = self.num_classes
+        if self.ignore_class:
+            nc += 1
         input_label = th.FloatTensor(bs, nc, h, w).zero_()
         input_semantics = input_label.scatter_(1, label_map, 1.0)
-
+        if self.ignore_class:
+            input_semantics = input_semantics[:, 1:, :, :]
         '''
         # write the unique values from the input_semantics first channel
         # to a txt file

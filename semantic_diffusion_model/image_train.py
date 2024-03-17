@@ -263,6 +263,12 @@ def get_args_from_command_line():
                         nargs='?',
                         const=False,
                         default=cfg.TRAIN.TYPE_LABELING)
+    
+    parser.add_argument('--resize',
+                        type=str2bool,
+                        nargs='?',
+                        const=True,
+                        default=cfg.DATASETS.RESIZE)
 
     args = parser.parse_args()
 
@@ -388,6 +394,8 @@ def main():
         cfg.TRAIN.GRAYSCALE = args.grayscale
     if args.type_labeling is not None:
         cfg.TRAIN.TYPE_LABELING = args.type_labeling
+    if args.resize is not None:
+        cfg.DATASETS.RESIZE = args.resize
     import torch
     torch.cuda.empty_cache()
     deepspeed.init_distributed(distributed_port=29601)
@@ -438,12 +446,15 @@ def main():
         json.dump(cfg, fp, indent=4)
         fp.close()
 
+    
+    num_of_classes = cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES*2
+
     logger.log("training...")
     TrainLoop(
         model=model,
         diffusion=diffusion,
         data=data,
-        num_classes=cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES*2,
+        num_classes= num_of_classes,
         batch_size=cfg.TRAIN.BATCH_SIZE,
         microbatch=cfg.TRAIN.MICROBATCH,
         lr=cfg.TRAIN.LR,
@@ -460,6 +471,7 @@ def main():
         visualizer=visualizer,
         image_log_interval=args.image_log_interval,
         grayscale=args.grayscale,
+        ignore_class=not cfg.DATASETS.RESIZE,
     ).run_loop()
 
     wandb_run.save(cfg.DATASETS.SAVEDIR + '/model_final.pt')

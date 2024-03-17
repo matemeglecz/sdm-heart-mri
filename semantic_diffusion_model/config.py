@@ -11,6 +11,7 @@ __C.DATASETS = edict()
 __C.DATASETS.DATADIR = '/path/to/dataset'
 __C.DATASETS.SAVEDIR = '/path/to/save'
 __C.DATASETS.DATASET_MODE = 'camus'
+__C.DATASETS.RESIZE = True
 
 __C.TRAIN = edict()
 __C.TRAIN.DIFFUSION = edict()

@@ -255,6 +255,12 @@ def get_args_from_command_line():
                         nargs='?',
                         default=False
                         )
+    
+    parser.add_argument('--resize',
+                        type=str2bool,
+                        nargs='?',
+                        const=True,
+                        default=cfg.DATASETS.RESIZE)
 
     args = parser.parse_args()
 
@@ -376,6 +382,8 @@ def main():
         cfg.TRAIN.GRAYSCALE = args.grayscale
     if args.type_labeling is not None:
         cfg.TRAIN.TYPE_LABELING = args.type_labeling  
+    if args.resize is not None:
+        cfg.DATASETS.RESIZE = args.resize
     
     #deepspeed.init_distributed()
     #dist_util.setup_dist()
