@@ -294,21 +294,19 @@ class SeDataset(Dataset):
                 transformed = self.transforms(image=sample, mask=mask)
             sample, mask = transformed["image"], transformed["mask"]
 
-        if 'T1' in path:
-            sample = (sample - DATASET_MEAN_T1_mapping) / (DATASET_STD_T1_mapping)
-        elif 'T2' in path:
-            sample = (sample - DATASET_MEAN_T2_mapping) / (DATASET_STD_T2_mapping)
-            # shift the mask values by the number of classes
-            if self.type_labeling:
-                mask = mask + self.num_classes
-
+        if 'T2' in path and self.type_labeling:            
+            mask = mask + self.num_classes
         
+        # print min max
+        #print(np.min(sample.flatten()), np.max(sample.flatten()))
+        sample = sample / 4095
         if self.resize:
             # Convert images to channels_first mode, from albumentations' 2d grayscale images
             sample = resize(sample, (self.resolution, self.resolution), anti_aliasing=True)
             
             mask = resize(mask, (self.resolution, self.resolution), anti_aliasing=False, mode='edge', preserve_range=True, order=0)
-        else:
+        else:            
+            #sample = sample / 4095
             # fill the image with zeros to make it resolution x resolution
             sample = np.pad(sample, ((0, self.resolution - sample.shape[0]), (0, self.resolution - sample.shape[1])), mode='constant', constant_values=0)
             mask += 1
@@ -354,7 +352,18 @@ class SeDataset(Dataset):
         mask = np.squeeze(mask, axis=0)
         #sample = (sample - np.min(sample.flatten())) / (np.max(sample.flatten()) - np.min(sample.flatten()))
         #sample = (sample * 2) - 1
-        
+        #print(np.min(sample.flatten()), np.max(sample.flatten()))
+        if 'T1' in path:
+            sample = (sample - DATASET_MEAN_T1_mapping) / (DATASET_STD_T1_mapping)
+        elif 'T2' in path:
+            sample = (sample - DATASET_MEAN_T2_mapping) / (DATASET_STD_T2_mapping)
+            # shift the mask values by the number of classes
+            #if self.type_labeling:
+            #    mask = mask + self.num_classes
+        #print(np.min(sample.flatten()), np.max(sample.flatten()))
+
+        # normalize the sample to -1, 1
+        sample = (sample - np.min(sample.flatten())) / (np.max(sample.flatten()) - np.min(sample.flatten()))
 
         out_dict = {}
         out_dict['path'] = path

@@ -59,11 +59,11 @@ def tensor2im_dicom(input_image, label, imtype=np.uint8, path=None):
 
     return image_numpy
 
-def make_contoured_image(image, mask):
+def make_contoured_image(image, mask, num_classes):
     #image = image[0, :, :] 
     #image = np.tile(image, (3,1,1)).transpose(1,2,0)
     
-    merged = merge_contours_on_image_from_mask(image, mask)
+    merged = merge_contours_on_image_from_mask(image, mask, num_classes)
     return merged
 
 
@@ -78,7 +78,7 @@ class Visualizer():
     
 
 
-    def log_images(self, sample, batch, cond, step):
+    def log_images(self, sample, batch, cond, step, num_classes):
         if self.wandb_run is not None:
             columns = ['mask', 'sample', 'real_image']
             columns.insert(0, 'step')
@@ -98,10 +98,10 @@ class Visualizer():
 
             image_numpy = tensor2im_dicom(batch, 'real_image')                
             wandb_image = wandb.Image(image_numpy)
-            #table_row.append(wandb_image)
-            #ims_dict['real_image'] = wandb_image
+            table_row.append(wandb_image)
+            ims_dict['real_image'] = wandb_image
 
-            contoured = make_contoured_image(sample_image_numpy, cond['label_ori'][0].float())
+            contoured = make_contoured_image(sample_image_numpy, cond['label_ori'][0].float(), num_classes)
             wandb_image = wandb.Image(contoured)
             table_row.append(wandb_image)
             ims_dict['contoured'] = wandb_image

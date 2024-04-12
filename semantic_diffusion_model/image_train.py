@@ -405,12 +405,16 @@ def main():
     batch, cond = next(data)
     label_map = cond['label']
     import torch as th
-    with open("unique_label_map.txt", "w") as f:
-        f.write(str(th.unique(label_map)))
+    # print min and max values of the image
+    print('min = %3.3f, max = %3.3f' % (th.min(batch), th.max(batch)))
+
+    #import torch as th
+    #with open("unique_label_map.txt", "w") as f:
+    #    f.write(str(th.unique(label_map)))
 
     return
-
-    
+    '''
+    '''
     plt.imsave('og.png', img[0, :, :], cmap=plt.cm.bone) 
     print(img.flatten())
     print(np.mean((img.numpy().flatten())))
@@ -449,6 +453,8 @@ def main():
     
     num_of_classes = cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES*2
 
+    if not cfg.DATASETS.RESIZE:
+        num_of_classes += 1
     logger.log("training...")
     TrainLoop(
         model=model,

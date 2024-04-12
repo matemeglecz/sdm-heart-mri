@@ -246,7 +246,7 @@ class TrainLoop:
             progress=False
         )
 
-        self.visualizer.log_images(step=self.step, batch=batch, cond=cond, sample=inference_img)
+        self.visualizer.log_images(step=self.step, batch=batch, cond=cond, sample=inference_img, num_classes=self.num_classes)
 
     def _update_ema(self):
         for rate, params in zip(self.ema_rate, self.ema_params):
@@ -302,12 +302,12 @@ class TrainLoop:
         label_map = data['label']
         bs, _, h, w = label_map.size()
         nc = self.num_classes
-        if self.ignore_class:
-            nc += 1
+        #if self.ignore_class:
+        #    nc += 1
         input_label = th.FloatTensor(bs, nc, h, w).zero_()
         input_semantics = input_label.scatter_(1, label_map, 1.0)
-        if self.ignore_class:
-            input_semantics = input_semantics[:, 1:, :, :]
+        #if self.ignore_class:
+        #    input_semantics = input_semantics[:, 1:, :, :]
         '''
         # write the unique values from the input_semantics first channel
         # to a txt file
@@ -340,7 +340,7 @@ class TrainLoop:
             mask = (th.rand([input_semantics.shape[0], 1, 1, 1]) > self.drop_rate).float()
             input_semantics = input_semantics * mask
 
-        cond = {key: value for key, value in data.items() if key not in ['label', 'instance', 'path', 'label_ori']}
+        cond = {key: value for key, value in data.items() if key not in ['label', 'instance', 'path', 'label_ori', 'size_ori']}
         cond['y'] = input_semantics
 
         return cond

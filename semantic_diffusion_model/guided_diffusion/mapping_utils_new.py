@@ -478,12 +478,15 @@ def find_last_in_row(row, value):
             return i
     return -1
 
-def merge_contours_on_image_from_mask(image, mask):
+def merge_contours_on_image_from_mask(image, mask, num_classes):
     # check if the last dimension is 3
     if image.shape[2] != 3:
         raise ValueError("The image should have 3 channels")
 
     # if the smallest value in the mask is 3, then we substract 3 form the values
+    if num_classes == 7:
+        mask -= 1
+        
     if mask.min() == 3:
         mask -= 3
     
