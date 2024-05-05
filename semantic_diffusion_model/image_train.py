@@ -403,6 +403,8 @@ def main():
     data = load_data(cfg)
 
     batch, cond = next(data)
+    return
+    
     label_map = cond['label']
     import torch as th
     # print min and max values of the image
