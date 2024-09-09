@@ -132,13 +132,13 @@ class SeDataset(Dataset):
             mask = mask.numpy()
         
         mask = np.squeeze(mask, axis=0)
-
+        sample = (sample - np.min(sample.flatten())) / (np.max(sample.flatten()) - np.min(sample.flatten()))
         sample = (sample * 2) - 1
         
         out_dict = {}
         out_dict['path'] = path
         out_dict['label_ori'] = mask.copy()
-        out_dict['label'] = mask[None,]
+        out_dict['label'] = mask#mask[None,]
 
 
         return sample, out_dict

@@ -1,7 +1,7 @@
 import copy
 import functools
 import os
-
+import numpy as np
 import blobfile as bf
 import torch as th
 import torch.distributed as dist
@@ -42,12 +42,13 @@ class TrainLoop:
             lr_anneal_steps=0,
             visualizer=None,
             image_log_interval=None,
-            grayscale=False
+            grayscale=False,
+            ignore_class = False
     ):
         self.model = model
         self.diffusion = diffusion
         self.data = data
-        self.num_classes = num_classes
+        self.num_classes = num_classes 
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
@@ -55,7 +56,7 @@ class TrainLoop:
             [ema_rate]
             if isinstance(ema_rate, float)
             else [float(x) for x in ema_rate.split(",")]
-        )
+        )        
         self.grayscale = grayscale
         self.drop_rate = drop_rate
         self.log_interval = log_interval
@@ -68,6 +69,7 @@ class TrainLoop:
         self.lr_anneal_steps = lr_anneal_steps
         self.image_log_interval = image_log_interval
         self.visualizer = visualizer
+        self.ignore_class = ignore_class
 
         self.step = 0
         self.resume_step = 0
@@ -235,7 +237,7 @@ class TrainLoop:
         sample_fn = self.diffusion.p_sample_loop
 
         model_kwargs = self.preprocess_input(cond)
-        cond['s'] = 1.0
+        model_kwargs['s'] = 1.0
         inference_img = sample_fn(
             self.model,
             (self.batch_size, (1 if self.grayscale else 3), batch.shape[2], batch.shape[3]),
@@ -244,7 +246,7 @@ class TrainLoop:
             progress=False
         )
 
-        self.visualizer.log_images(step=self.step, batch=batch, cond=cond, sample=inference_img)
+        self.visualizer.log_images(step=self.step, batch=batch, cond=cond, sample=inference_img, num_classes=self.num_classes)
 
     def _update_ema(self):
         for rate, params in zip(self.ema_rate, self.ema_params):
@@ -265,20 +267,21 @@ class TrainLoop:
         logger.logkv("lr_anneal_steps", self.lr_anneal_steps)
 
     def save(self, final=False):
-        def save_checkpoint(rate, params):
+        def save_checkpoint(rate, params, final_save=False):
             state_dict = self.mp_trainer.master_params_to_state_dict(params)
             if dist.get_rank() == 0:
                 logger.log(f"saving model {rate}...")
                 if not rate:
                     filename = f"model{(self.step + self.resume_step):06d}.pt"
+                elif final_save:
+                    filename = f"model_final.pt"
                 else:
                     filename = f"ema_{rate}_{(self.step + self.resume_step):06d}.pt"
-                if final:
-                    filename = f"model_final.pt"
+                
                 with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
                     th.save(state_dict, f)
 
-        save_checkpoint(0, self.mp_trainer.master_params)
+        save_checkpoint(0, self.mp_trainer.master_params, final_save=final)
         for rate, params in zip(self.ema_rate, self.ema_params):
             save_checkpoint(rate, params)
 
@@ -299,9 +302,34 @@ class TrainLoop:
         label_map = data['label']
         bs, _, h, w = label_map.size()
         nc = self.num_classes
+        #if self.ignore_class:
+        #    nc += 1
         input_label = th.FloatTensor(bs, nc, h, w).zero_()
         input_semantics = input_label.scatter_(1, label_map, 1.0)
+        #if self.ignore_class:
+        #    input_semantics = input_semantics[:, 1:, :, :]
+        '''
+        # write the unique values from the input_semantics first channel
+        # to a txt file
+        with open("unique.txt", "w") as f:
+            f.write(str(th.unique(input_semantics[:, 0, :, :])))
+            f.write(str(th.unique(input_semantics[:, 1, :, :])))
+            f.write(str(th.unique(input_semantics[:, 2, :, :])))
+            # write the shape of the input_semantics to the txt file
+            f.write(str(input_semantics.shape))
 
+            
+
+        # check if there is other than 0 in the second channel in input_semantics write result in a txt file
+        if th.max(input_semantics[:, 1, :, :]) > 0:
+            with open("check.txt", "w") as f:
+                f.write("One in the second channel of the input_semantics\n")
+
+        # same for the third channel
+        if th.max(input_semantics[:, 2, :, :]) > 0:
+            with open("check.txt", "a") as f:
+                f.write("One in the third channel of the input_semantics\n")
+        '''
         # concatenate instance map if it exists
         if 'instance' in data:
             inst_map = data['instance']
@@ -312,7 +340,7 @@ class TrainLoop:
             mask = (th.rand([input_semantics.shape[0], 1, 1, 1]) > self.drop_rate).float()
             input_semantics = input_semantics * mask
 
-        cond = {key: value for key, value in data.items() if key not in ['label', 'instance', 'path', 'label_ori']}
+        cond = {key: value for key, value in data.items() if key not in ['label', 'instance', 'path', 'label_ori', 'size_ori', 'mask_path']}
         cond['y'] = input_semantics
 
         return cond

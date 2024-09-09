@@ -8,6 +8,7 @@ import cv2
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import scipy
+import scipy.interpolate
 import re
 
 def check_datset(root):
@@ -36,7 +37,7 @@ def check_datset(root):
         "T2_map_apex_uncorrected",
         "T2_map_base_uncorrected",
         "T2_map_mid_uncorrected"]
-    
+
     patients = sorted(glob.glob(os.path.join(root,'*')))
     
     for patient_folder in patients:
@@ -110,7 +111,7 @@ def construct_samples_list(root, contours_filename="Contours.json"):
     """
     samples = []
     # No warnings for missing contours in this function. Simply skip incorrect samples. Run check_dataset to check for missing data.
-    for patient_folder in sorted(glob.glob(os.path.join(root,'*'))):
+    for patient_folder in sorted(glob.glob(os.path.join(root, '*', 'Patient (*'))):
         for slice_path in glob.glob(os.path.join(patient_folder,'*')):
             if "_uncorrected" in os.path.basename(slice_path):
                 continue
@@ -121,15 +122,14 @@ def construct_samples_list(root, contours_filename="Contours.json"):
                     contour_paths = [expected_contours_path]*len(dcm_paths)
                     samples.extend(zip(dcm_paths, contour_paths))
             elif  "Mapping" in os.path.basename(slice_path):
-                if "T1_Mapping" in os.path.basename(slice_path):                    
+                if "T1_Mapping" in os.path.basename(slice_path):
                     contours_folders = {"Apex.dcm": "T1_map_apex", 
                                         "Base.dcm": "T1_map_base", 
-                                        "Mid.dcm": "T1_map_mid_"}                    
-                elif "T2_Mapping" in os.path.basename(slice_path):                                        
+                                        "Mid.dcm": "T1_map_mid_"}
+                elif "T2_Mapping" in os.path.basename(slice_path):
                     contours_folders = {"Apex.dcm": "T2_map_apex", 
                                         "Base.dcm": "T2_map_base", 
                                         "Mid.dcm": "T2_map_mid_"} 
-                                                            
                 for mapping_dcm_path in glob.glob(os.path.join(slice_path, '*.dcm')):
                     # Mapping dcms should be named Apex.dcm, Base.dcm, Mid.dcm, Apex_2.dcm, Base_2.dcm, Mid_2.dcm
                     # Contours for _2 files are not loaded!
@@ -138,7 +138,7 @@ def construct_samples_list(root, contours_filename="Contours.json"):
                         continue
                     conotours_folder = contours_folders[mapping_dcm_type]
                     expected_contours_path = os.path.join(patient_folder, conotours_folder, contours_filename)
-                    if os.path.exists(expected_contours_path):                         
+                    if os.path.exists(expected_contours_path): 
                         samples.append((mapping_dcm_path, expected_contours_path))
 
     return samples
@@ -201,7 +201,15 @@ def print_diagnostics(root, samples, list_shapes=False, get_mean_std=False):
         all_pixels = []
         # for dicom_path in tqdm(sorted(glob.glob(os.path.join(root,'**', '*.dcm'), recursive=True)), desc="Loading all dicoms for dataset stats"):
         for dicom_path in tqdm(sorted([sample[0] for sample in samples]), desc="Loading all dicoms for dataset stats"):
-            image = pydicom.dcmread(dicom_path).pixel_array
+            try:
+                image = pydicom.dcmread(dicom_path).pixel_array # force True
+            except:
+                #print(e)
+                print("Incorrect dicom:", dicom_path)
+                f = open("bad_mris.txt", "a")
+                f.write(dicom_path + '\n')
+                f.close()
+                continue
             if image.shape not in shapes:
                 shapes.append(image.shape)
             if get_mean_std:
@@ -212,6 +220,12 @@ def print_diagnostics(root, samples, list_shapes=False, get_mean_std=False):
             all_pixels = np.concatenate(all_pixels)
             print(f"Pixel mean for all images {all_pixels.mean()}")
             print(f"Pixel std for all images {all_pixels.std()}")
+        
+        stats = {"shapes": shapes,
+                 "mean": all_pixels.mean(), 
+                 "std": all_pixels.std(),
+                 "all_pixels": all_pixels}
+        return stats
 
 
 def rename_Mapping_2_mapping(root: str):
@@ -279,12 +293,13 @@ def get_dataset_mean_std(root: str):
     return all_pixels.mean(), all_pixels.std()
 
 
-def load_dicom(path, mode='channels_first'):
+def load_dicom(path, mode='channels_first', use_modality_lut=True):
     """
     Loads dicom files to a numpy array. 
     Args:
         path (str): 
         mode (str, optional): 'channels_first', 'channels_last', '2d' or None. Defaults to 'channels_first'.
+        use_modality_lut (bool, optional): If True applies modality lut to the image. Defaults to True. Using modality lut is the correct way to load dicom images, but it was not used when we trained our models!
 
     Returns:
         np.ndarray: image data from the dicom file
@@ -301,6 +316,10 @@ def load_dicom(path, mode='channels_first'):
     except AttributeError as e:
         print(e)
         print("Incorrect dicom:", path)
+        return None
+
+    if use_modality_lut:
+        image = pydicom.pixel_data_handlers.util.apply_modality_lut(image, dcm).astype(np.float32)
 
     if mode == 'channels_first':
         image = np.expand_dims(image, 0)
@@ -339,9 +358,9 @@ def contours_to_masks(contours, shape, contour_fp_precision_bits = 10):
     Args:
         contours ([np.ndarray, np.ndarray]): Coordinates of epicardial_contour, endocardial_contour points as ndarrays.
         shape (tuple): Shape of the output mask, shape of the input image
-        round_bits (int, optional): OpenCV's fillPoly accepts contours with fix point representation.
-                                    contour_fp_precision_bits determines the number of fractional bits.
-                                    Contours are rounded to this precision. Defaults to 10.
+        contour_fp_precision_bits (int, optional): OpenCV's fillPoly accepts contours with fix point representation.
+                                                   contour_fp_precision_bits determines the number of fractional bits.
+                                                   Contours are rounded to this precision. Defaults to 10.
 
     Returns:
         np.ndarray: Segmentation mask
@@ -359,13 +378,167 @@ def contours_to_masks(contours, shape, contour_fp_precision_bits = 10):
     else:
         mask = np.zeros(shape[-2:])
     
-    # Three class version
-    cv2.fillPoly(mask, pts=[rounded_conoturs[0]], color=(1,1,1), shift=contour_fp_precision_bits)
-    cv2.fillPoly(mask, pts=[rounded_conoturs[1]], color=(2,2,2), shift=contour_fp_precision_bits)
+    # n class version
+    for i in range(len(contours)):
+        cv2.fillPoly(mask, pts=[rounded_conoturs[i]], color=(i+1,i+1,i+1), shift=contour_fp_precision_bits)
 
     # Foreground between contours only
     # cv2.fillPoly(mask, pts=[np.concatenate(rounded_conoturs)], color=(1,1,1), shift=contour_fp_precision_bits)
-    return mask / (max(mask.flatten()) + 1)
+    
+    return mask #/ (max(mask.flatten()) + 1)
+
+def contours_to_masks_v2(contours, shape):
+
+    ret, thresh = cv2.threshold(imgray, 127, 255, 0)
+    im2, contours, hierarchy = cv2.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+
+
+def contours_to_masks_v2(contours, shape, contour_fp_precision_bits = 8, oversampling_factor=4):
+    """Converts segmentation contours (epicardial_contour, endocardial_contour) to segmentation mask.
+       Region between the two contours is foreground, rest is background. 
+
+    Args:
+        contours ([np.ndarray, np.ndarray]): Coordinates of epicardial_contour, endocardial_contour points as ndarrays.
+        shape (tuple): Shape of the output mask, shape of the input image
+        contour_fp_precision_bits (int, optional): OpenCV's fillPoly accepts contours with fix point representation.
+                                                   contour_fp_precision_bits determines the number of fractional bits.
+                                                   Contours are rounded to this precision. Defaults to 10.
+        oversampling_factor (int, optional): Degree of oversampling to be applied to the input contours before creating the segmentation mask.
+                                             Higher values result in more accurate but slower segmentation masks. 
+                                             A value of 1 means no oversampling is applied.
+                                             Defaults to 4.
+    Returns:
+        np.ndarray: Segmentation mask
+    """
+    upscaled_contours = [c*oversampling_factor for c in contours]
+    
+    # OpenCV's fillPoly accepts contours with fix point representation, passed as int32,
+    # whose last 'shift' bits are interpreted as fractional bits.
+    # Here we multiply by 2^contour_fp_precision_bits to achieve this representation.
+    rounded_conoturs = [np.around(contour*2**contour_fp_precision_bits).astype(np.int32) for contour in upscaled_contours]
+
+    # Rounded contours might have repeated points which could break filling betweeng the two contours.
+    rounded_conoturs = [unique_consecutive(contour) for contour in rounded_conoturs]
+    
+    if len(shape) == 2:
+        mask = np.zeros(np.array(shape)*oversampling_factor)
+    else:
+        mask = np.zeros(np.array(shape[-2:])*oversampling_factor)
+    
+    # Draw epicardial
+    cv2.fillPoly(mask, pts=[rounded_conoturs[0]], color=(1,1,1), shift=contour_fp_precision_bits)
+
+    # Draw endocardial
+    tmp_mask = np.zeros_like(mask)
+    cv2.fillPoly(tmp_mask, pts=[rounded_conoturs[1]], color=(2,2,2), shift=contour_fp_precision_bits)
+    # Erode left ventricular region by 1 pixel, so that the endocardial contour is also inside the myocardial mask
+    kernel = cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3))
+    cv2.erode(tmp_mask, kernel=kernel, dst=tmp_mask, iterations=1)
+    mask[tmp_mask==2] = 2
+
+    # Downscale to original size
+    mask = cv2.resize(mask, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
+
+    return mask #/ (max(mask.flatten()) + 1)
+
+
+def contours_to_map(contours, shape, contour_fp_precision_bits = 8, oversampling_factor=4):
+    '''Trial, not working'''
+    upscaled_contours = [c*oversampling_factor for c in contours]
+    
+    # OpenCV's fillPoly accepts contours with fix point representation, passed as int32,
+    # whose last 'shift' bits are interpreted as fractional bits.
+    # Here we multiply by 2^contour_fp_precision_bits to achieve this representation.
+    rounded_conoturs = [np.around(contour).astype(np.int32) for contour in upscaled_contours]
+
+    # Rounded contours might have repeated points which could break filling betweeng the two contours.
+    rounded_conoturs = [unique_consecutive(contour) for contour in rounded_conoturs]
+    
+    if len(shape) == 2:
+        map = np.zeros(np.array(shape)*oversampling_factor)
+    else:
+        map = np.zeros(np.array(shape[-2:])*oversampling_factor)
+
+    #print(map.shape)
+
+    cv2.drawContours(map, [rounded_conoturs[0]], -1, (1, 1, 1), thickness=8)
+
+    cv2.drawContours(map, [rounded_conoturs[1]], -1, (1, 1, 1), thickness=8)
+    
+    # print unique values
+    #print(np.unique(map))
+
+    map = cv2.resize(map, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
+    #print(map.shape)
+    return map
+
+def find_last_in_row(row, value):
+    for i in range(len(row)-1, -1, -1):
+        if row[i] == value:
+            return i
+    return -1
+
+def merge_contours_on_image_from_mask(image, mask, num_classes):
+    # check if the last dimension is 3
+    if image.shape[2] != 3:
+        raise ValueError("The image should have 3 channels")
+
+    # if the smallest value in the mask is 3, then we substract 3 form the values
+    if num_classes == 7:
+        mask -= 1
+        
+    if 3 in np.unique(mask):
+        mask -= 3
+    
+    print(np.unique(mask))
+
+    shape = image.shape
+
+    first_contour_found_outer = False
+    last_contour_found_outer = False
+    first_contour_found_inner = False
+    last_contour_found_inner = False
+    for i in range(shape[0]):
+        # find first and last occurence of 1 in the mask
+        if not last_contour_found_outer:
+            first = np.argmax(mask[i, :] == 1)
+            #print(first)
+            if first > 0:
+                if not first_contour_found_outer:
+                    first_contour_found_outer = True
+                    # set image pixel value to green where the mask is 1 in that line
+                    last = find_last_in_row(mask[i, :], 1)
+                    image[i, first:last+1] = [0, 150, 0]
+                else:
+                    last = find_last_in_row(mask[i, :], 1)
+                    image[i, first] = [0, 150, 0]
+                    image[i, last] = [0, 150, 0]
+            elif first_contour_found_outer:
+                last_contour_found_outer = True
+                first = np.argmax(mask[i-1, :] == 1)
+                last = find_last_in_row(mask[i-1, :], 1)
+                image[i-1, first:last+1] = [0, 150, 0]
+
+        # same for inner with 2 pixel value
+        if not last_contour_found_inner:
+            first = np.argmax(mask[i, :] == 2)
+            if first > 0:
+                if not first_contour_found_inner:
+                    first_contour_found_inner = True
+                    last = find_last_in_row(mask[i, :], 2)
+                    image[i, first:last+1] = [150, 0, 0]
+                else:
+                    last = find_last_in_row(mask[i, :], 2)
+                    image[i, first] = [150, 0, 0]
+                    image[i, last] = [150, 0, 0]
+            elif first_contour_found_inner:
+                last_contour_found_inner = True
+                first = np.argmax(mask[i-1, :] == 2)
+                last = find_last_in_row(mask[i-1, :], 2)
+                image[i-1, first:last+1] = [150, 0, 0]
+        
+
+    return image
 
 
 def unique_consecutive(contour):
@@ -376,13 +549,17 @@ def unique_consecutive(contour):
             duplicate_pts.append(idx)
     return np.delete(contour, duplicate_pts, axis=0)
 
-
-def plot_contours(contours, ax, formats=('C0', 'C1'), labels=("Epicardial contour", "Endocardial contour"), **kwargs):
+def plot_contours(contours, ax,
+                  formats=('C0', 'C1'),
+                  linestyles=('-', '--'),
+                  linewidth=1.5,
+                  labels=("Epicardial contour", "Endocardial contour"), 
+                  **kwargs):
     epicardial_contour, endocardial_contour = contours
     if epicardial_contour is not None:
-        ax.plot(epicardial_contour[:,0], epicardial_contour[:,1], formats[0], label=labels[0], **kwargs)
+        ax.plot(epicardial_contour[:,0], epicardial_contour[:,1], formats[0], linestyle=linestyles[0], label=labels[0], linewidth=linewidth, **kwargs)
     if endocardial_contour is not None:
-        ax.plot(endocardial_contour[:,0], endocardial_contour[:,1], formats[1], label=labels[1], **kwargs)
+        ax.plot(endocardial_contour[:,0], endocardial_contour[:,1], formats[1], linestyle=linestyles[1], label=labels[1], linewidth=linewidth, **kwargs)
     ax.legend()
 
 def plot_between_contours(contours, ax, format=('C0'), label=("Prediction"), **kwargs):
@@ -393,13 +570,37 @@ def plot_between_contours(contours, ax, format=('C0'), label=("Prediction"), **k
     ax.legend()
 
 
-def plot_dcm(dcm_path, ax):
+def plot_dcm(dcm_path, ax, cmap=plt.cm.bone):
     ds = pydicom.dcmread(dcm_path)
-    ax.imshow(ds.pixel_array, cmap=plt.cm.bone)
+    ax.imshow(ds.pixel_array, cmap=cmap, interpolation='none', resample=False)
     ax.set_xticks([])
     ax.set_yticks([])
 
+def plot_dcm_img(dcm_img, ax, cmap=plt.cm.CMRmap):
+    ax.imshow(dcm_img, cmap=cmap, interpolation='none', resample=False)
 
+def compute_roi(mask, padding_ratio=0.1):
+    rp = 1 + padding_ratio
+    rm = 1 - padding_ratio
+    bbox = [int(mask.nonzero()[1].min() * rm),
+            int(mask.nonzero()[0].min() * rm),
+            int(mask.nonzero()[1].max() * rp),
+            int(mask.nonzero()[0].max() * rp),
+            ] # x_min, y_min, x_max, y_max
+    return bbox
+
+def compute_roi_square(mask, padding_ratio=0.1):
+    roi = compute_roi(mask, 0)
+    roi_center = ((roi[0] + roi[2])/2, (roi[1] + roi[3])/2)
+    roi_sizes = (roi[2] - roi[0], roi[3] - roi[1])
+    roi_l_size = max(roi_sizes)
+    s = roi_l_size * (1 + padding_ratio)
+    c = roi_center
+    bbox = [int(c[0] - s/2),
+            int(c[1] - s/2),
+            int(c[0] + s/2),
+            int(c[1] + s/2)]
+    return bbox
 
 def check_contours(contours):
     if len(contours) !=2:
@@ -443,7 +644,7 @@ def hausdorff_dist(contours_pred, contours_gt, missing_value=np.NaN):
 
     results = []
     for idx in range(len(contours_gt)):
-        if contours_pred[idx] is not None:
+        if contours_pred[idx] is not None and contours_gt[idx] is not None:
             dir_hausdorf_gt_pred, _, _ = scipy.spatial.distance.directed_hausdorff(contours_gt[idx],   contours_pred[idx])
             dir_hausdorf_pred_gt, _, _ = scipy.spatial.distance.directed_hausdorff(contours_pred[idx], contours_gt[idx])
             hausdorf_dist = max(dir_hausdorf_gt_pred, dir_hausdorf_pred_gt)
@@ -470,7 +671,7 @@ def mean_surface_distance(contours_pred, contours_gt, missing_value=np.NaN):
 
     results = []
     for contour_idx in range(len(contours_gt)):
-        if contours_pred[contour_idx] is not None:
+        if contours_pred[contour_idx] is not None and contours_gt[contour_idx] is not None:
             pairwise_dists = scipy.spatial.distance.cdist(contours_gt[contour_idx], contours_pred[contour_idx])
             h_mean_AB = np.mean(np.min(pairwise_dists, axis=0))
             h_mean_BA = np.mean(np.min(pairwise_dists, axis=1))
@@ -582,16 +783,105 @@ def fit_contours(mask:np.ndarray, num_classes=2, interp_factor=4):
         num_pts = fitted_contour.shape[0]
         # splprep can't fit a curve to <= 3 points.
         if interp_factor > 1 and num_pts > 3:
-            # Close the contour by repeating the first point (if not done here the interpolated curve won't go through one of the endpoints, presumably the last)
-            fitted_contour = np.vstack([fitted_contour, fitted_contour[0]])
-            # Based on: https://agniva.me/scipy/2016/10/25/contour-smoothing.html
-            # https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.interpolate.splprep.html
-            tck, u = scipy.interpolate.splprep(fitted_contour.T.tolist(), u=None, s=1.0, per=1)
-            # https://docs.scipy.org/doc/numpy-1.10.1/reference/generated/numpy.linspace.html
-            u_new = np.linspace(u.min(), u.max(), num_pts*interp_factor)
-            # https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.interpolate.splev.html
-            x_new, y_new = scipy.interpolate.splev(u_new, tck, der=0)
-            fitted_contour = np.stack([x_new, y_new], axis=1)
+            try:
+                # Close the contour by repeating the first point (if not done here the interpolated curve won't go through one of the endpoints, presumably the last)
+                fitted_contour = np.vstack([fitted_contour, fitted_contour[0]])
+                # Based on: https://agniva.me/scipy/2016/10/25/contour-smoothing.html
+                # https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.interpolate.splprep.html
+                tck, u = scipy.interpolate.splprep(fitted_contour.T.tolist(), u=None, s=1.0, per=1)
+                # https://docs.scipy.org/doc/numpy-1.10.1/reference/generated/numpy.linspace.html
+                u_new = np.linspace(u.min(), u.max(), num_pts*interp_factor)
+                # https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.interpolate.splev.html
+                x_new, y_new = scipy.interpolate.splev(u_new, tck, der=0)
+                fitted_contour = np.stack([x_new, y_new], axis=1)
+            except ValueError as e:
+                print("Warning! Interpolation failed for contour!")
+                print(e)
+                fitted_contour = None
 
         fitted_contours.append(fitted_contour)
     return fitted_contours
+
+
+def compute_T1T2(
+    dcm,
+    mask,
+):
+    """Computes T1 or T2 values from a dicom image and a mask by summing pixel intensities where mask == 1 and dividing by the number of 1 pixels in the mask.
+    Mask values are assumed to be 0: background, 1: myocardium, 2: left ventricle.
+
+    Args:
+        dcm (np.ndarray): dicom pixel array intensity values
+        mask (np.ndarray): multi-class mask with values in [0,1,2]
+    """
+    mask_class = 1
+    # # Erode the mask
+    # bin_mask = (mask == mask_class).astype(np.uint8)
+    # kernel = cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3))
+    # cv2.erode(bin_mask, kernel=kernel, dst=bin_mask, iterations=1)
+    # bin_mask = bin_mask.astype(bool)
+
+    bin_mask = (mask == mask_class)
+    return np.sum(dcm[bin_mask]) / np.sum(bin_mask)
+
+
+def get_pixels_inside_contours(contours, dcm_img):
+    """Returns the pixels between the contours.
+
+    Args:
+        contours (_type_): contours as tuple or list of two arrays: (epicardial_contour, endocardial_contour)
+        dcm_img (np.ndarray): dicom pixel array intensity values
+
+    Returns:
+        (np.ndarray): pixels between the contours
+    """
+    mask = contours_to_masks(contours, dcm_img.shape)
+    mask_class = 1
+    bin_mask = (mask == mask_class)
+    return dcm_img[bin_mask]
+
+
+def convert_ukbb_mask(ukbb_mask):
+    """Converts the UKBB mask to the format used in the rest of the project
+    UKBB masks are 0-255, 0 is the background, 255 is the myocardium
+    Our masks are 0-1, 0 is the background, 1 is the myocardium, 2 is the left ventricle
+    """
+
+    # Convert from 0-255 to 0-1
+    converted_mask = ukbb_mask // 255
+    # Invert the mask
+    converted_mask = 1 - converted_mask
+    # Increase the values by one -> left ventrice 1->2, myocardium 0->1
+    converted_mask = converted_mask + 1
+    # Using cv2.flodfill make the outer region 0
+    h, w = converted_mask.shape
+    mask = np.zeros((h+2, w+2), np.uint8)
+    cv2.floodFill(converted_mask, mask, (0, 0), 0)    
+
+    return converted_mask
+
+
+def fit_contour_ukbb(mask):
+    """Fit a contour to a binary mask from the UKBB dataset
+    Mask is a binary image with 1s for the myocardium and 0s elsewhere.
+    """
+    fitted_contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE )
+    out_contours = []
+    for fitted_contour in fitted_contours:
+        # Ensure counter-clockwise orientation
+        if cv2.contourArea(fitted_contour, oriented=True) < 0:
+            fitted_contour = fitted_contour[::-1]
+        fitted_contour = fitted_contour.squeeze(axis=1)
+        out_contours.append(fitted_contour)
+    return out_contours
+
+def load_ukbb_mask_contour(mask_path, shape=None):
+    target_mask_ukbb_style = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+    target_mask = convert_ukbb_mask(target_mask_ukbb_style)
+    target_contour = fit_contour_ukbb(target_mask_ukbb_style)
+    if shape is not None:
+        verification_mask = contours_to_masks_v2(target_contour, shape)
+        if np.any((verification_mask==1) != (target_mask_ukbb_style//255)):
+            print("Warning! Verification mask and target mask are not equal!")
+    
+    return target_mask, target_contour

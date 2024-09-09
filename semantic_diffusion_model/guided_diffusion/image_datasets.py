@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 from mpi4py import MPI
 from torch.utils.data import DataLoader, Dataset
-from .se_dataset import SeDataset
+from .se_dataset_v2 import SeDataset
 
 
 def load_data(cfg):
@@ -34,7 +34,13 @@ def load_data(cfg):
             num_shards=MPI.COMM_WORLD.Get_size(),
             random_crop=cfg.TRAIN.RANDOM_CROP,
             random_flip=cfg.TRAIN.RANDOM_FLIP,
-            is_train=(cfg.TRAIN.IS_TRAIN or cfg.TEST.INFERENCE_ON_TRAIN))
+            is_train=(cfg.TRAIN.IS_TRAIN or cfg.TEST.INFERENCE_ON_TRAIN),
+            type_labeling=cfg.TRAIN.TYPE_LABELING,
+            resize=cfg.DATASETS.RESIZE,)
+            # save len of dataset to a file
+            #with open('/artifacts/len_dataset.txt', 'w') as f:
+            #    f.write(str(len(dataset)))
+
     else:
         if cfg.DATASETS.DATASET_MODE == 'cityscapes':
             all_files = _list_image_files_recursively(

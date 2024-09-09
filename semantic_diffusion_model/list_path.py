@@ -1,25 +1,31 @@
 """
-Train a diffusion model on images.
+Generate a large batch of image samples from a model and save them as a large
+numpy array. This can be used to produce samples for FID evaluation.
 """
 
 import argparse
-import json
 import os
 from argparse import ArgumentParser
-import wandb
-from guided_diffusion.visualizer import Visualizer
-from datetime import datetime
+import glob
 import deepspeed
 import numpy as np
+import torch as th
+import torch.distributed as dist
+import torchvision as tv
+from PIL import Image
+from skimage.color import label2rgb
+from skimage.feature import canny
+
 from config import cfg
 from guided_diffusion import dist_util, logger
 from guided_diffusion.image_datasets import load_data
-from guided_diffusion.resample import create_named_schedule_sampler
 from guided_diffusion.script_util import (
     create_model_and_diffusion,
 )
-from guided_diffusion.train_util import TrainLoop
+
 import matplotlib.pyplot as plt
+from torchmetrics.image.kid import KernelInceptionDistance
+from torchmetrics.image.fid import FrechetInceptionDistance
 
 
 def str2bool(v):
@@ -36,11 +42,9 @@ def str2bool(v):
 def get_args_from_command_line():
     parser = ArgumentParser(description='Parser of Semantic Diffusion Model')
     parser.add_argument('--datadir',
-                        default=cfg.DATASETS.DATADIR,
-                        type=str)
+                        default=cfg.DATASETS.DATADIR)
     parser.add_argument('--savedir',
-                        default=cfg.DATASETS.SAVEDIR,
-                        type=str)
+                        default=cfg.DATASETS.SAVEDIR)
     parser.add_argument('--dataset_mode',
                         default=cfg.DATASETS.DATASET_MODE,
                         type=str)
@@ -237,38 +241,12 @@ def get_args_from_command_line():
     parser.add_argument('--results_dir',
                         default=cfg.TEST.RESULTS_DIR,
                         type=str)
-    parser.add_argument('--use_wandb', 
-                        action='store_true', 
-                        default=False)
-    parser.add_argument('--wandb_project_name',
-                        default='Heart mri semantic diffusion',
-                        type=str)
-    parser.add_argument('--wandb_entity_name',
-                        default='megleczmate',
-                        type=str)
-    parser.add_argument('--run_name',
-                        default=None,
-                        type=str)
-    parser.add_argument('--image_log_interval',
-                        default=None,
-                        type=int)
     parser.add_argument('--grayscale',
                         type=str2bool,
                         const=True,
                         nargs='?',
                         default=False
                         )
-    parser.add_argument('--type_labeling',
-                        type=str2bool,
-                        nargs='?',
-                        const=False,
-                        default=cfg.TRAIN.TYPE_LABELING)
-    
-    parser.add_argument('--resize',
-                        type=str2bool,
-                        nargs='?',
-                        const=True,
-                        default=cfg.DATASETS.RESIZE)
 
     args = parser.parse_args()
 
@@ -277,15 +255,11 @@ def get_args_from_command_line():
 
 def main():
     args = get_args_from_command_line()
-    
-    if args.run_name is None:
-        # get timestamp
-        args.run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") 
 
     if args.datadir is not None:
         cfg.DATASETS.DATADIR = args.datadir
     if args.savedir is not None:
-        cfg.DATASETS.SAVEDIR = args.savedir + '/' + args.run_name
+        cfg.DATASETS.SAVE_DIR = args.savedir
     if args.dataset_mode is not None:
         cfg.DATASETS.DATASET_MODE = args.dataset_mode
     if args.learn_sigma is not None:
@@ -391,101 +365,222 @@ def main():
     if args.results_dir is not None:
         cfg.TEST.RESULTS_DIR = args.results_dir
     if args.grayscale is not None:
-        cfg.TRAIN.GRAYSCALE = args.grayscale
-    if args.type_labeling is not None:
-        cfg.TRAIN.TYPE_LABELING = args.type_labeling
-    if args.resize is not None:
-        cfg.DATASETS.RESIZE = args.resize
-    import torch
-    torch.cuda.empty_cache()
-    deepspeed.init_distributed(distributed_port=29601)
-    '''
-    data = load_data(cfg)
-
-    batch, cond = next(data)
-    return
+        cfg.TRAIN.GRAYSCALE = args.grayscale    
     
-    label_map = cond['label']
-    import torch as th
-    # print min and max values of the image
-    print('min = %3.3f, max = %3.3f' % (th.min(batch), th.max(batch)))
-
-    #import torch as th
-    #with open("unique_label_map.txt", "w") as f:
-    #    f.write(str(th.unique(label_map)))
-
-    return
-    '''
-    '''
-    plt.imsave('og.png', img[0, :, :], cmap=plt.cm.bone) 
-    print(img.flatten())
-    print(np.mean((img.numpy().flatten())))
-    img = (img + 1) / 2
-    img = (img - np.min(img.numpy())) / (np.max(img.numpy()) - np.min(img.numpy()))
-    print(np.mean((img.numpy().flatten())))
-    plt.imsave('new.png', img[0, :, :], cmap=plt.cm.bone) 
-
-    return
-    '''
-    
-    # init wandb with tensorboard
-    if args.use_wandb:
-        #wandb.tensorboard.patch(root_logdir=cfg.DATASETS.SAVEDIR + "/tb")
-        wandb_run = wandb.init(project=args.wandb_project_name, entity=args.wandb_entity_name ,name=args.run_name, config=args, sync_tensorboard=True) if not wandb.run else wandb.run
-        visualizer = Visualizer(wandb_run, args.image_log_interval)
-    dist_util.setup_dist()
-    logger.configure(save_dir=cfg.DATASETS.SAVEDIR)
-
+    #deepspeed.init_distributed()
+    #dist_util.setup_dist()
+    logger.configure()
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(cfg)
+
+    model.load_state_dict(
+        dist_util.load_state_dict(cfg.TRAIN.RESUME_CHECKPOINT)
+
+    )
     if cfg.TRAIN.DISTRIBUTED_DATA_PARALLEL:
-        
-        print('start')
+
         model.to(dist_util.dev())
-        print('end')
     else:
         model.to('cuda')
 
-    schedule_sampler = create_named_schedule_sampler(cfg.TRAIN.SCHEDULE_SAMPLER, diffusion)
 
     logger.log("creating data loader...")
     data = load_data(cfg)
-    with open(os.path.join(cfg.DATASETS.SAVEDIR, 'train_test_config.json'), 'w') as fp:
-        json.dump(cfg, fp, indent=4)
-        fp.close()
+
+    if cfg.TRAIN.USE_FP16:
+        model.convert_to_fp16()
+    model.eval()
+    
+    folder_name = args.resume_checkpoint.split('/')[-2]
+
+    cfg.TEST.RESULTS_DIR = os.path.join(cfg.TEST.RESULTS_DIR, folder_name)
+
+    image_path = os.path.join(cfg.TEST.RESULTS_DIR, 'images')
+    os.makedirs(image_path, exist_ok=True)
+    label_path = os.path.join(cfg.TEST.RESULTS_DIR, 'labels')
+    os.makedirs(label_path, exist_ok=True)
+    visible_label_path = os.path.join(cfg.TEST.RESULTS_DIR, 'labels_visible')
+    os.makedirs(visible_label_path, exist_ok=True)
+    inference_path = os.path.join(cfg.TEST.RESULTS_DIR, 'samples')
+    os.makedirs(inference_path, exist_ok=True)
+    combined_path = os.path.join(cfg.TEST.RESULTS_DIR, 'combined')
+    os.makedirs(combined_path, exist_ok=True)
+    os.makedirs('./tmp/', exist_ok=True)
+
+    logger.log("sampling...")
+    all_samples = []
+    synthesized_images = []
+    real_images = []
+    for i, (batch, cond) in enumerate(data):        
+        src_img = (batch).cuda()
+        label_img = (cond['label_ori'].float())
+        model_kwargs = preprocess_input(cond, num_classes=cfg.TRAIN.NUM_CLASSES)
+        
+
+        f = open("pathes.txt", "a")
+        
+        for j in range(10):
+            f.write(f"{i}{j}. {cond['path'][j]}\n")
+        f.close()
+
+
+        # set hyperparameter
+        model_kwargs['s'] = cfg.TEST.S
+        sample_fn = (
+            diffusion.p_sample_loop if not cfg.TEST.USE_DDIM else diffusion.ddim_sample_loop
+        )
+        '''
+        import time
+        if i == 0:
+            tic = time.perf_counter()
+            
+            inference_img = sample_fn(
+                model,
+                (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
+                clip_denoised=cfg.TEST.CLIP_DENOISED,
+                model_kwargs=model_kwargs,
+                progress=False
+            )
+
+            toc = time.perf_counter()
+            print(f"Downloaded the tutorial in {toc - tic:0.4f} seconds")
+
+        else:
+            inference_img = sample_fn(
+                model,
+                (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
+                clip_denoised=cfg.TEST.CLIP_DENOISED,
+                model_kwargs=model_kwargs,
+                progress=False
+            )
+            '''
+        if i < 0:
+            final = None
+            pic_num = 0
+            for sample in diffusion.p_sample_loop_progressive(
+                    model,
+                    (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
+                    noise=None,
+                    clip_denoised=cfg.TEST.CLIP_DENOISED,
+                    denoised_fn=None,
+                    cond_fn=None,
+                    model_kwargs=model_kwargs,
+                    device=None,
+                    progress=False,
+            ):                
+                im = sample["sample"].cpu().float().numpy()
+                plt.imsave(os.path.join('./tmp' + '3' + '/', str(pic_num)+'.png'), im[5, 0, :, :], cmap=plt.cm.bone)
+                pic_num = pic_num + 1
+        
+            make_gif("./tmp", cfg.TEST.RESULTS_DIR, str(i))
+
+            return
+
+        #inference_img = (inference_img + 1) / 2.0
+        
+        #gathered_samples = [th.zeros_like(inference_img)] #for _ in range(dist.get_world_size())]
+        #dist.all_gather(gathered_samples, inference_img)  # gather not supported with NCCL
+        #all_samples.extend([sample.cpu().numpy() for sample in gathered_samples])
+        
+         
+        logger.log(f"created {i * cfg.TEST.BATCH_SIZE} samples")
+
+        if i * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
+            break
+
+
+    synthesized_images = th.cat(synthesized_images, dim=0)
+    real_images = th.cat(real_images, dim=0)
+    print(synthesized_images.size())
+
+    th.save(synthesized_images, folder_name + '_syn.pt')
+    th.save(real_images, folder_name + '_real.pt')
+    # split synthesized_images into 10 subsets
+    synthesized_images = th.split(synthesized_images, 200, dim=0)
+    # split real_images into 10 subsets
+    real_images = th.split(real_images, 200, dim=0)
+
+    # calculate FID
+    fid = FrechetInceptionDistance(normalize=True, feature=768) #768
+    for i in range(len(synthesized_images)):                
+        fid.update(synthesized_images[i], real=False)
+        fid.update(real_images[i], real=True)
+
+    fid_score = fid.compute().item()
+    print('FID: ', fid_score)
+    
+
+    # calculate KID
+    kid = KernelInceptionDistance(normalize=True, subset_size=200, feature=2048, subsets=100)
+    for i in range(len(real_images)):
+        kid.update(synthesized_images[i], real=False)
+        kid.update(real_images[i], real=True)
+    
+    kid_mean, kid_std = kid.compute()
+    print('KID: ', (kid_mean, kid_std))
+
+    #dist.barrier()
+    logger.log("sampling complete")
 
     
-    num_of_classes = cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES*2
 
-    if not cfg.DATASETS.RESIZE:
-        num_of_classes += 1
-    logger.log("training...")
-    TrainLoop(
-        model=model,
-        diffusion=diffusion,
-        data=data,
-        num_classes= num_of_classes,
-        batch_size=cfg.TRAIN.BATCH_SIZE,
-        microbatch=cfg.TRAIN.MICROBATCH,
-        lr=cfg.TRAIN.LR,
-        ema_rate=cfg.TRAIN.EMA_RATE,
-        drop_rate=cfg.TRAIN.DROP_RATE,
-        log_interval=cfg.TRAIN.LOG_INTERVAL,
-        save_interval=cfg.TRAIN.SAVE_INTERVAL,
-        resume_checkpoint=cfg.TRAIN.RESUME_CHECKPOINT,
-        use_fp16=cfg.TRAIN.USE_FP16,
-        fp16_scale_growth=cfg.TRAIN.FP16_SCALE_GROWTH,
-        schedule_sampler=schedule_sampler,
-        weight_decay=cfg.TRAIN.WEIGHT_DECAY,
-        lr_anneal_steps=cfg.TRAIN.LR_ANNEAL_STEPS,
-        visualizer=visualizer,
-        image_log_interval=args.image_log_interval,
-        grayscale=args.grayscale,
-        ignore_class=not cfg.DATASETS.RESIZE,
-    ).run_loop()
 
-    wandb_run.save(cfg.DATASETS.SAVEDIR + '/model_final.pt')
+def generate_combined_imgs(src_in_img, label_in_img, inference_in_img):
+    overlayed_label = label2rgb(label=label_in_img[:, :, 0], image=inference_in_img,
+                                bg_label=0,
+                                channel_axis=-1,
+                                alpha=0.2, image_alpha=1)
 
-    wandb_run.finish()
+    src_out_img = (src_in_img * 255).astype('uint8')
+    overlayed_label = (overlayed_label * 255).astype('uint8')
+
+    edges = canny(label_in_img[:, :, 0] / label_in_img[:, :, 0].max())
+    edges = np.expand_dims(edges, axis=-1)
+    edges = np.concatenate((edges, edges, edges), axis=-1) * 255
+    edges[:, :, 2] = 0
+
+    overlayed_edge_label = np.copy(inference_in_img)
+    overlayed_edge_label[edges == 255] = 255
+
+    combined_imgs = np.concatenate((src_out_img, inference_in_img, overlayed_label, overlayed_edge_label),
+                                   axis=0).astype(
+        np.uint8)
+
+    return combined_imgs
+
+
+def preprocess_input(data, num_classes):
+    # move to GPU and change data types
+    data['label'] = data['label'].long()
+
+    # create one-hot label map
+    label_map = data['label']
+    bs, _, h, w = label_map.size()
+    input_label = th.FloatTensor(bs, num_classes, h, w).zero_()
+    input_semantics = input_label.scatter_(1, label_map, 1.0)
+
+    # concatenate instance map if it exists
+    if 'instance' in data:
+        inst_map = data['instance']
+        instance_edge_map = get_edges(inst_map)
+        input_semantics = th.cat((input_semantics, instance_edge_map), dim=1)
+
+    return {'y': input_semantics}
+
+
+def get_edges(t):
+    edge = th.ByteTensor(t.size()).zero_()
+    edge[:, :, :, 1:] = edge[:, :, :, 1:] | (t[:, :, :, 1:] != t[:, :, :, :-1])
+    edge[:, :, :, :-1] = edge[:, :, :, :-1] | (t[:, :, :, 1:] != t[:, :, :, :-1])
+    edge[:, :, 1:, :] = edge[:, :, 1:, :] | (t[:, :, 1:, :] != t[:, :, :-1, :])
+    edge[:, :, :-1, :] = edge[:, :, :-1, :] | (t[:, :, 1:, :] != t[:, :, :-1, :])
+    return edge.float()
+
+def make_gif(frame_folder, save_path, sample_num):
+    frames = [Image.open(image) for image in glob.glob(f"{frame_folder}/*.png")]
+    frame_one = frames[0]
+    frame_one.save(os.path.join(save_path, "example" + sample_num + ".gif"), format="GIF", append_images=frames,
+               save_all=True, duration=100, loop=0)
+
 if __name__ == "__main__":
     main()

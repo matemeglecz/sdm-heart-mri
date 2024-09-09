@@ -15,6 +15,8 @@ import torchvision as tv
 from PIL import Image
 from skimage.color import label2rgb
 from skimage.feature import canny
+from guided_diffusion.mapping_utils_new import merge_contours_on_image_from_mask
+
 
 from config import cfg
 from guided_diffusion import dist_util, logger
@@ -24,6 +26,8 @@ from guided_diffusion.script_util import (
 )
 
 import matplotlib.pyplot as plt
+from torchmetrics.image.kid import KernelInceptionDistance
+from torchmetrics.image.fid import FrechetInceptionDistance
 
 
 def str2bool(v):
@@ -245,6 +249,18 @@ def get_args_from_command_line():
                         nargs='?',
                         default=False
                         )
+    parser.add_argument('--type_labeling',
+                        type=str2bool,
+                        const=True,
+                        nargs='?',
+                        default=False
+                        )
+    
+    parser.add_argument('--resize',
+                        type=str2bool,
+                        nargs='?',
+                        const=True,
+                        default=cfg.DATASETS.RESIZE)
 
     args = parser.parse_args()
 
@@ -363,10 +379,47 @@ def main():
     if args.results_dir is not None:
         cfg.TEST.RESULTS_DIR = args.results_dir
     if args.grayscale is not None:
-        cfg.TRAIN.GRAYSCALE = args.grayscale    
+        cfg.TRAIN.GRAYSCALE = args.grayscale
+    if args.type_labeling is not None:
+        cfg.TRAIN.TYPE_LABELING = args.type_labeling  
+    if args.resize is not None:
+        cfg.DATASETS.RESIZE = args.resize
     
-    deepspeed.init_distributed()
-    dist_util.setup_dist()
+    #deepspeed.init_distributed()
+    #dist_util.setup_dist()
+
+    #make_gif("./tmp3", cfg.TEST.RESULTS_DIR, 'demo_gif3')
+    #return
+    '''
+    data = load_data(cfg)
+
+    batch, cond  = next(iter(data))
+
+    
+    # save the contour images
+    for i in range(1):
+
+        src_img = batch[i]
+        # normalize
+        src_img = (src_img - th.min(src_img)) / (th.max(src_img) - th.min(src_img))
+
+        # make src image have 3 channels
+        src_img = np.tile(src_img, (3,1,1)).transpose(1,2,0)
+
+        merged = merge_contours_on_image_from_mask(src_img, cond['label_ori'][i])
+        #contour_image = np.tile(batch[i, :, :], (1,1,1)).transpose(1,2,0) * 255
+        
+        # merged to tensor
+        merged = th.from_numpy(merged).permute(2, 0, 1)
+
+        #contour_image = merge_contours_on_image(contour_image, cond[0]['contour'][i])
+        tv.utils.save_image(merged,
+                            os.path.join('/artifacts/',
+                                         str(i) + '.png'))
+
+
+    return
+    '''
     logger.configure()
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(cfg)
@@ -384,7 +437,7 @@ def main():
 
     logger.log("creating data loader...")
     data = load_data(cfg)
-
+    
     if cfg.TRAIN.USE_FP16:
         model.convert_to_fp16()
     model.eval()
@@ -404,27 +457,59 @@ def main():
     combined_path = os.path.join(cfg.TEST.RESULTS_DIR, 'combined')
     os.makedirs(combined_path, exist_ok=True)
     os.makedirs('./tmp/', exist_ok=True)
+    contour_path = os.path.join(cfg.TEST.RESULTS_DIR, 'with_contour')
+    os.makedirs(contour_path, exist_ok=True)
+
+    num_of_classes = cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES*2
+
+    if not cfg.DATASETS.RESIZE:
+        num_of_classes += 1
+
 
     logger.log("sampling...")
     all_samples = []
+    synthesized_images = []
+    real_images = []
+    mask_path_list = []
     for i, (batch, cond) in enumerate(data):        
         src_img = (batch).cuda()
         label_img = (cond['label_ori'].float())
-        model_kwargs = preprocess_input(cond, num_classes=cfg.TRAIN.NUM_CLASSES)
-        
+        model_kwargs = preprocess_input(cond, num_classes=num_of_classes)
+        for j in range(len(cond['mask_path'])):
+            mask_path_list.append(cond['mask_path'][j])
+            print(cond['mask_path'][j])
         # set hyperparameter
         model_kwargs['s'] = cfg.TEST.S
         sample_fn = (
             diffusion.p_sample_loop if not cfg.TEST.USE_DDIM else diffusion.ddim_sample_loop
         )
-        inference_img = sample_fn(
-            model,
-            (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
-            clip_denoised=cfg.TEST.CLIP_DENOISED,
-            model_kwargs=model_kwargs,
-            progress=False
-        )
-        if i > 0:
+        
+        import time
+        if i == 0:
+            tic = time.perf_counter()
+            
+            inference_img = sample_fn(
+                model,
+                (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
+                clip_denoised=cfg.TEST.CLIP_DENOISED,
+                model_kwargs=model_kwargs,
+                progress=False
+            )
+
+            toc = time.perf_counter()
+            print(f"Downloaded the tutorial in {toc - tic:0.4f} seconds")
+
+        else:
+            inference_img = sample_fn(
+                model,
+                (cfg.TEST.BATCH_SIZE, 1, src_img.shape[2], src_img.shape[3]),
+                clip_denoised=cfg.TEST.CLIP_DENOISED,
+                model_kwargs=model_kwargs,
+                progress=False
+            )
+
+        '''
+        if i == 0:
             final = None
             pic_num = 0
             for sample in diffusion.p_sample_loop_progressive(
@@ -439,15 +524,25 @@ def main():
                     progress=False,
             ):                
                 im = sample["sample"].cpu().float().numpy()
-                plt.imsave(os.path.join('./tmp/', str(pic_num)+'.png'), im[0, 0, :, :], cmap=plt.cm.bone)
+                # put 0s before the number
+                if pic_num < 10:
+                    plt.imsave(os.path.join('./tmp/', '00' + str(pic_num)+'.png'), im[5, 0, :, :], cmap=plt.cm.bone)
+                elif pic_num < 100:
+                    plt.imsave(os.path.join('./tmp/', '0' + str(pic_num)+'.png'), im[5, 0, :, :], cmap=plt.cm.bone)
+                else:
+                    plt.imsave(os.path.join('./tmp/', str(pic_num)+'.png'), im[5, 0, :, :], cmap=plt.cm.bone)
                 pic_num = pic_num + 1
         
             make_gif("./tmp", cfg.TEST.RESULTS_DIR, str(i))
+            
+            return
+        '''
+        
 
         inference_img = (inference_img + 1) / 2.0
         
-        gathered_samples = [th.zeros_like(inference_img) for _ in range(dist.get_world_size())]
-        dist.all_gather(gathered_samples, inference_img)  # gather not supported with NCCL
+        gathered_samples = [th.zeros_like(inference_img)] #for _ in range(dist.get_world_size())]
+        #dist.all_gather(gathered_samples, inference_img)  # gather not supported with NCCL
         all_samples.extend([sample.cpu().numpy() for sample in gathered_samples])
         print(inference_img.shape)
         for j in range(inference_img.shape[0]):
@@ -455,18 +550,33 @@ def main():
             #tv.utils.save_image(src_img[j],
             #                    os.path.join(image_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
 
-            im = src_img.cpu().float().numpy()
-            plt.imsave(os.path.join(image_path, str(i) + str(j) + '.png'), im[j, 0, :, :], cmap=plt.cm.bone)                    
+            src_im = src_img.cpu().float().numpy()
+            synth_im = inference_img.cpu().float().numpy()
+            
+            plt.imsave(os.path.join(image_path, str(i) + str(j) + '.png'), src_im[j, 0, :, :], cmap=plt.cm.bone)                    
             #tv.utils.save_image(inference_img[j],
             #                    os.path.join(inference_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
-            im = inference_img.cpu().float().numpy()
-            plt.imsave(os.path.join(inference_path, str(i) + str(j) + '.png'), im[j, 0, :, :], cmap=plt.cm.bone) 
-            tv.utils.save_image(label_img[j] / cfg.TRAIN.NUM_CLASSES,
+            
+            plt.imsave(os.path.join(inference_path, str(i) + str(j) + '.png'), synth_im[j, 0, :, :], cmap=plt.cm.bone) 
+            tv.utils.save_image(label_img[j] / num_of_classes,
                                 os.path.join(visible_label_path,
                                              str(i) + str(j) + '.png'))
 
-            label_save_img = Image.fromarray(label_img[j].cpu().detach().numpy()).convert('RGB')
-            label_save_img.save(os.path.join(label_path, str(i) + str(j) + '.png'))
+            #label_save_img = Image.fromarray(label_img[j].cpu().detach().numpy()).convert('RGB')
+            #label_save_img.save(os.path.join(label_path, str(i) + str(j) + '.png'))
+            
+            contour_base = (synth_im[j, 0, :, :] - np.min(synth_im[j, 0, :, :] )) / (np.max(synth_im[j, 0, :, :]) - np.min(synth_im[j, 0, :, :]))
+
+            contour_base = np.tile(contour_base, (3,1,1)).transpose(1,2,0)
+           
+            merged = merge_contours_on_image_from_mask(contour_base, label_img[j], num_of_classes)
+
+            merged = th.from_numpy(merged).permute(2, 0, 1)
+
+            tv.utils.save_image(merged,
+                                os.path.join(contour_path,
+                                             str(i) + str(j) + '.png'))
+            
 
             src_img_np = src_img[j].permute(1, 2, 0).detach().cpu().numpy()
             label_img_np = label_img[j].repeat(3, 1, 1).permute(1, 2, 0).detach().cpu().numpy()
@@ -474,7 +584,15 @@ def main():
             inference_img_np = (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)
             inference_img_np = (255 * (inference_img_np - np.min(inference_img_np)) / np.ptp(inference_img_np)).astype(
                 int)
+            
+            print(synth_im.shape)
+            synth_im = synth_im[j]
+            src_im = src_im[j]
+            synth_im = np.expand_dims(synth_im, 0)
+            src_im = np.expand_dims(src_im, 0)
 
+            synthesized_images.append(th.from_numpy(np.tile(synth_im, (3,1,1))))
+            real_images.append(th.from_numpy(np.tile(src_im,(3,1,1))))              
             '''
             combined_imgs = generate_combined_imgs(src_img_np,
                                                    label_img_np.astype(np.int_),
@@ -485,10 +603,48 @@ def main():
             '''
         logger.log(f"created {len(all_samples) * cfg.TEST.BATCH_SIZE} samples")
 
-        if len(all_samples) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
+        #if len(all_samples) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
+        if (i+1) * cfg.TEST.BATCH_SIZE > cfg.TEST.NUM_SAMPLES:
             break
 
-    dist.barrier()
+
+    synthesized_images = th.cat(synthesized_images, dim=0)
+    real_images = th.cat(real_images, dim=0)
+    print(synthesized_images.size())
+
+    th.save(synthesized_images, folder_name + '_syn.pt')
+    th.save(real_images, folder_name + '_real.pt')
+
+    # save mask path list to txt
+    with open(os.path.join(cfg.TEST.RESULTS_DIR, 'mask_path_list.txt'), 'w') as f:
+        for item in mask_path_list:
+            f.write("%s\n" % item)
+
+    # split synthesized_images into 10 subsets
+    synthesized_images = th.split(synthesized_images, 200, dim=0)
+    # split real_images into 10 subsets
+    real_images = th.split(real_images, 200, dim=0)
+
+    # calculate FID
+    fid = FrechetInceptionDistance(normalize=True, feature=768) #768
+    for i in range(len(synthesized_images)):                
+        fid.update(synthesized_images[i], real=False)
+        fid.update(real_images[i], real=True)
+
+    fid_score = fid.compute().item()
+    print('FID: ', fid_score)
+    
+
+    # calculate KID
+    kid = KernelInceptionDistance(normalize=True, subset_size=200, feature=2048, subsets=100)
+    for i in range(len(real_images)):
+        kid.update(synthesized_images[i], real=False)
+        kid.update(real_images[i], real=True)
+    
+    kid_mean, kid_std = kid.compute()
+    print('KID: ', (kid_mean, kid_std))
+
+    #dist.barrier()
     logger.log("sampling complete")
 
     
@@ -546,10 +702,10 @@ def get_edges(t):
     return edge.float()
 
 def make_gif(frame_folder, save_path, sample_num):
-    frames = [Image.open(image) for image in glob.glob(f"{frame_folder}/*.png")]
+    frames = [Image.open(image) for image in sorted(glob.glob(f"{frame_folder}/*.png"))]
     frame_one = frames[0]
     frame_one.save(os.path.join(save_path, "example" + sample_num + ".gif"), format="GIF", append_images=frames,
-               save_all=True, duration=100, loop=0)
+               save_all=True, duration=10, loop=0)
 
 if __name__ == "__main__":
     main()
