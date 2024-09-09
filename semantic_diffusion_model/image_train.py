@@ -440,7 +440,9 @@ def main():
     model, diffusion = create_model_and_diffusion(cfg)
     if cfg.TRAIN.DISTRIBUTED_DATA_PARALLEL:
         
+        print('start')
         model.to(dist_util.dev())
+        print('end')
     else:
         model.to('cuda')
 

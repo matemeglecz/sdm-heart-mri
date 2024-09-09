@@ -459,17 +459,17 @@ def contours_to_map(contours, shape, contour_fp_precision_bits = 8, oversampling
     else:
         map = np.zeros(np.array(shape[-2:])*oversampling_factor)
 
-    print(map.shape)
+    #print(map.shape)
 
     cv2.drawContours(map, [rounded_conoturs[0]], -1, (1, 1, 1), thickness=8)
 
     cv2.drawContours(map, [rounded_conoturs[1]], -1, (1, 1, 1), thickness=8)
     
     # print unique values
-    print(np.unique(map))
+    #print(np.unique(map))
 
     map = cv2.resize(map, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
-    print(map.shape)
+    #print(map.shape)
     return map
 
 def find_last_in_row(row, value):
@@ -487,9 +487,11 @@ def merge_contours_on_image_from_mask(image, mask, num_classes):
     if num_classes == 7:
         mask -= 1
         
-    if mask.min() == 3:
+    if 3 in np.unique(mask):
         mask -= 3
     
+    print(np.unique(mask))
+
     shape = image.shape
 
     first_contour_found_outer = False
@@ -500,7 +502,7 @@ def merge_contours_on_image_from_mask(image, mask, num_classes):
         # find first and last occurence of 1 in the mask
         if not last_contour_found_outer:
             first = np.argmax(mask[i, :] == 1)
-            print(first)
+            #print(first)
             if first > 0:
                 if not first_contour_found_outer:
                     first_contour_found_outer = True

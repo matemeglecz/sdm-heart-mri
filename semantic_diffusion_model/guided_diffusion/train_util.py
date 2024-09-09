@@ -340,7 +340,7 @@ class TrainLoop:
             mask = (th.rand([input_semantics.shape[0], 1, 1, 1]) > self.drop_rate).float()
             input_semantics = input_semantics * mask
 
-        cond = {key: value for key, value in data.items() if key not in ['label', 'instance', 'path', 'label_ori', 'size_ori']}
+        cond = {key: value for key, value in data.items() if key not in ['label', 'instance', 'path', 'label_ori', 'size_ori', 'mask_path']}
         cond['y'] = input_semantics
 
         return cond
