@@ -7,6 +7,7 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+
 # Install miniconda
 ENV CONDA_DIR /opt/conda
 RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
@@ -14,7 +15,6 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86
 
 # Put conda in path so we can use conda activate
 ENV PATH=$CONDA_DIR/bin:$PATH
-
 
 # install pip
 RUN apt-get update && apt-get install -y python3-pip
@@ -24,6 +24,9 @@ RUN conda install mpi4py
 COPY requirements3.txt requirements3.txt
 RUN pip install -r requirements3.txt
 WORKDIR /app
+
+RUN apt-get install -y libgl1
+RUN pip install opencv-python-headless
 
 RUN pip list
 RUN apt install nano
