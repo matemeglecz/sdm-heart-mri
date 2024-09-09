@@ -460,15 +460,24 @@ def main():
     contour_path = os.path.join(cfg.TEST.RESULTS_DIR, 'with_contour')
     os.makedirs(contour_path, exist_ok=True)
 
+    num_of_classes = cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES*2
+
+    if not cfg.DATASETS.RESIZE:
+        num_of_classes += 1
+
+
     logger.log("sampling...")
     all_samples = []
     synthesized_images = []
     real_images = []
+    mask_path_list = []
     for i, (batch, cond) in enumerate(data):        
         src_img = (batch).cuda()
         label_img = (cond['label_ori'].float())
-        model_kwargs = preprocess_input(cond, num_classes= (cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES * 2))
-        
+        model_kwargs = preprocess_input(cond, num_classes=num_of_classes)
+        for j in range(len(cond['mask_path'])):
+            mask_path_list.append(cond['mask_path'][j])
+            print(cond['mask_path'][j])
         # set hyperparameter
         model_kwargs['s'] = cfg.TEST.S
         sample_fn = (
@@ -549,7 +558,7 @@ def main():
             #                    os.path.join(inference_path, cond['path'][j].split(os.sep)[-1].split('.')[0] + '.png'))
             
             plt.imsave(os.path.join(inference_path, str(i) + str(j) + '.png'), synth_im[j, 0, :, :], cmap=plt.cm.bone) 
-            tv.utils.save_image(label_img[j] / (cfg.TRAIN.NUM_CLASSES if not cfg.TRAIN.TYPE_LABELING else cfg.TRAIN.NUM_CLASSES * 2),
+            tv.utils.save_image(label_img[j] / num_of_classes,
                                 os.path.join(visible_label_path,
                                              str(i) + str(j) + '.png'))
 
@@ -560,7 +569,7 @@ def main():
 
             contour_base = np.tile(contour_base, (3,1,1)).transpose(1,2,0)
            
-            merged = merge_contours_on_image_from_mask(contour_base, label_img[j])
+            merged = merge_contours_on_image_from_mask(contour_base, label_img[j], num_of_classes)
 
             merged = th.from_numpy(merged).permute(2, 0, 1)
 
@@ -605,6 +614,12 @@ def main():
 
     th.save(synthesized_images, folder_name + '_syn.pt')
     th.save(real_images, folder_name + '_real.pt')
+
+    # save mask path list to txt
+    with open(os.path.join(cfg.TEST.RESULTS_DIR, 'mask_path_list.txt'), 'w') as f:
+        for item in mask_path_list:
+            f.write("%s\n" % item)
+
     # split synthesized_images into 10 subsets
     synthesized_images = th.split(synthesized_images, 200, dim=0)
     # split real_images into 10 subsets

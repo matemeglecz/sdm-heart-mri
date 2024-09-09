@@ -35,7 +35,8 @@ def load_data(cfg):
             random_crop=cfg.TRAIN.RANDOM_CROP,
             random_flip=cfg.TRAIN.RANDOM_FLIP,
             is_train=(cfg.TRAIN.IS_TRAIN or cfg.TEST.INFERENCE_ON_TRAIN),
-            type_labeling=cfg.TRAIN.TYPE_LABELING,)
+            type_labeling=cfg.TRAIN.TYPE_LABELING,
+            resize=cfg.DATASETS.RESIZE,)
             # save len of dataset to a file
             #with open('/artifacts/len_dataset.txt', 'w') as f:
             #    f.write(str(len(dataset)))
